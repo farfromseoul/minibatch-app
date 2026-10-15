@@ -1,0 +1,43 @@
+# MiniBatch 앱 저장소에 올라가면 안 되는 파일.
+
+# 비밀 값과 호스트별 값
+.env
+.env.*
+secrets/
+*token*.json
+*client_secret*.json
+*_api_key
+n8n_encryption_key
+job_api_token
+
+# 작업 산출물과 모델. 저장소 최상위만 막는다 (코드 안의 같은 이름 폴더는 막지 않는다)
+/data/
+/jobs/
+/models/
+/poc/out/
+*.wav
+*.mp3
+*.mp4
+!render/public/samples/*.mp4
+*.onnx
+*.safetensors
+*.pth
+*.ckpt
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node / Remotion
+node_modules/
+render/out/
+render/build/
+
+# 편집기와 OS
+.DS_Store
+.idea/
+.vscode/
