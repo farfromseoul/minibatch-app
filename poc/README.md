@@ -49,7 +49,7 @@ docker run --rm -v "$PWD":/poc -w /poc -e PYTHONDONTWRITEBYTECODE=1 python:3.12-
 
 ## 2. TTS 비교
 
-엔진마다 설치가 무겁고 의존성이 달라 각자 일회용 컨테이너에서 돌린다. 아래 명령은 공식 저장소 README를 따랐고 실행해 보지 않았다(미확인). 모델 가중치는 처음 한 번 내려받으므로 캐시를 이름 있는 볼륨에 둔다.
+엔진마다 설치가 무겁고 의존성이 달라 각자 일회용 컨테이너에서 돌린다. 아래 명령은 2026-10-16 실행해 확인했다. 모델 가중치는 처음 한 번 내려받으므로 캐시를 이름 있는 볼륨에 둔다. 비교가 끝나면 `docker volume rm minibatch-poc-cache`로 지운다.
 
 ### MeloTTS (MIT)
 
@@ -58,12 +58,14 @@ cd ~/personal-projects/minibatch-app/poc
 docker run --rm -v "$PWD":/poc -w /poc -v minibatch-poc-cache:/root/.cache python:3.9-slim bash -c '
   apt-get update -qq && apt-get install -y -qq git build-essential >/dev/null &&
   git clone -q https://github.com/myshell-ai/MeloTTS.git /opt/MeloTTS &&
+  sed -i "/^gradio/d" /opt/MeloTTS/requirements.txt &&
   pip install -q -e /opt/MeloTTS &&
   python -m unidic download &&
   python -m tts_compare.run --engine melotts'
 ```
 
 - 공식 문서: Ubuntu·Python 3.9에서 개발·시험, 설치는 저장소를 받아 `pip install -e .` 후 `python -m unidic download`. 한국어는 `TTS(language="KR")`, 화자 `spk2id["KR"]`.
+- 공식 `requirements.txt` 그대로는 pip 의존성 탐색이 20분 넘게 끝나지 않는다(캐시 14GB). 웹 화면용 `gradio`를 빼면 4분에 설치된다.
 
 ### Supertonic 3 (코드 MIT, 모델 OpenRAIL-M, 저장소 보관 처리됨)
 
@@ -79,10 +81,12 @@ docker run --rm -v "$PWD":/poc -w /poc -v minibatch-poc-cache:/root/.cache pytho
 ```
 
 - 공식 저장소: 개발과 지원이 끝난 보관 저장소다. 채택하면 보안 패치가 없다.
-- 목소리(스타일) 선택 인자는 확인하지 못해 예제 기본값을 쓴다.
+- 목소리는 예제 기본값을 쓴다. 예제는 `--voice-style`(모델 폴더 `voice_styles/`), `--speed`(기본 1.05)를 받는다.
+- 문장마다 예제 스크립트를 새로 띄우므로 RTF에 모델 적재 시간이 들어간다.
 
 ### 확인
 
+- 결과 (2026-10-16): MeloTTS 3/3·RTF 약 0.4·청취 4·3, Supertonic 3/3·RTF 0.45~0.62·청취 4·4. Supertonic 기본, MeloTTS 예비로 결정(아키텍처 D6).
 - 끝에 엔진 표(성공 수, 평균 RTF)가 나오고 `out/tts/summary-<엔진>.md`에 저장된다.
 - 음성: `out/tts/<엔진>/s01.wav` ~ `s03.wav`를 직접 들어 본다. 점수 기준(발음, 자연스러움 5점 중 3점 이상, RTF 1 미만, 라이선스)은 실행계획 5단계 표.
 - 실패하면: 컨테이너 출력의 마지막 오류를 그대로 붙여 준다.
