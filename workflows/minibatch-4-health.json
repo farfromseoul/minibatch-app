@@ -1,0 +1,157 @@
+{
+  "name": "MiniBatch 4 상태 감시",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "09b7591f-0e0e-5377-b5f8-c263a9629926",
+      "name": "5분마다",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 설정: 여기 한 곳만 고친다. 텔레그램 chat id 는 비밀 값이 아니다 (봇 토큰은 자격 증명 'MiniBatch 텔레그램' 에)\nreturn [{ json: {\n  api: 'http://job-api:8080',                 // compose 안의 job-api 주소\n  chatId: 'CHAT_ID_를_여기에',                 // 25번 ③에서 확인한 내 chat id (숫자)\n  formBase: 'http://localhost:5678/form',     // 승인 폼 주소 (이 MacBook 브라우저에서 연다)\n  category: 'ai-it',\n} }];"
+      },
+      "id": "03db64b7-64e7-59b1-b434-6cd329a89d8a",
+      "name": "설정",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('설정').first().json.api }}/healthz",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "6619e054-5e0a-5042-9869-0f3d9698773e",
+      "name": "healthz",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 같은 경고는 한 번만 보낸다. 사라지면 '회복'. 갱신 토큰 6일째 경고도 여기로 온다 (테스트 상태, 7일 만료)\nconst st = $getWorkflowStaticData('global');\nconst r = $input.first().json;\nlet problems = [];\nif (r.error || !r.status) problems = [`job-api 응답 없음: ${r.error?.message || JSON.stringify(r.error || r).slice(0, 200)}`];\nelse {\n  if (r.status !== 'ok') problems.push(`상태 ${r.status}`);\n  problems = problems.concat(r.warnings || []);\n}\nconst key = problems.join(' | ');\nif (key === (st.last || '')) return [];\nst.last = key;\nreturn [{ json: { text: key ? `⚠️ MiniBatch 상태 경고\\n- ${problems.join('\\n- ')}` : '✅ MiniBatch 상태 회복 (경고 없음)' } }];"
+      },
+      "id": "b232f37f-686f-547e-a58a-0426b025ad2d",
+      "name": "새 경고인가",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('설정').first().json.chatId }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "347de0a1-07a0-5b2b-8363-6fca37370537",
+      "name": "알림: 상태",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        0
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "mbTelegram00001",
+          "name": "MiniBatch 텔레그램"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "5분마다": {
+      "main": [
+        [
+          {
+            "node": "설정",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "설정": {
+      "main": [
+        [
+          {
+            "node": "healthz",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "healthz": {
+      "main": [
+        [
+          {
+            "node": "새 경고인가",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "새 경고인가": {
+      "main": [
+        [
+          {
+            "node": "알림: 상태",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Seoul",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": [],
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

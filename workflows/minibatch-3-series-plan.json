@@ -1,0 +1,692 @@
+{
+  "name": "MiniBatch 3 시리즈 계획",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 50 5-22 * * *"
+            }
+          ]
+        }
+      },
+      "id": "4f600f65-313d-549b-8992-0727abfe4308",
+      "name": "매시 50분 (남은 화 확인)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "4ebc9d67-0389-5da8-9933-697a9e216c04",
+      "name": "수동 실행",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 설정: 여기 한 곳만 고친다. 텔레그램 chat id 는 비밀 값이 아니다 (봇 토큰은 자격 증명 'MiniBatch 텔레그램' 에)\nreturn [{ json: {\n  api: 'http://job-api:8080',                 // compose 안의 job-api 주소\n  chatId: 'CHAT_ID_를_여기에',                 // 25번 ③에서 확인한 내 chat id (숫자)\n  formBase: 'http://localhost:5678/form',     // 승인 폼 주소 (이 MacBook 브라우저에서 연다)\n  category: 'ai-it',\n} }];"
+      },
+      "id": "30a16f1f-bdd0-5007-a73d-f4413e422559",
+      "name": "설정",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('설정').first().json.api }}/series",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "4dff4957-8da1-5161-a0df-f790a25b6346",
+      "name": "시리즈 목록",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        100
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mbJobApi0000001",
+          "name": "MiniBatch job-api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 승인 대기 계획이 없고, 진행 중 시리즈의 남은 화가 하루치(10)보다 적으면 새 계획 (D27)\nconst items = $input.first().json.items || [];\nif (items.some(s => s.status === 'PROPOSED')) return [];\nconst left = items.filter(s => ['APPROVED', 'ACTIVE'].includes(s.status)).reduce((n, s) => n + (s.counts?.planned || 0), 0);\nreturn left >= 10 ? [] : [{ json: { left } }];"
+      },
+      "id": "c60b2bb6-9025-5715-a63b-562433e7fd00",
+      "name": "계획이 필요한가",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('설정').first().json.api }}/series",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ category: $('설정').first().json.category, episodeCount: 10 }) }}",
+        "options": {
+          "timeout": 900000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "75e433ed-c6e2-58ad-909a-2facc1785244",
+      "name": "계획 만들기 (LLM)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        100
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mbJobApi0000001",
+          "name": "MiniBatch job-api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 성공하면 job-api 가 [계획 승인] 버튼 메시지를 보낸다 (D28). 여기서는 실패만 알린다 (busy 는 다음 시각에 다시)\nconst r = $input.first().json;\nif (r.statusCode === 201 || r.body?.error?.code === 'busy') return [];\nreturn [{ json: { text: `⚠️ MiniBatch 시리즈 계획 만들기 실패 (${r.statusCode}): ${r.body?.error?.message || ''}` } }];"
+      },
+      "id": "82cf71d5-8b14-5fd7-a0df-0280088ecfa4",
+      "name": "알림 문장",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('설정').first().json.chatId }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "6ce739f3-ecec-5e2f-88bd-28b8b97e197d",
+      "name": "알림: 계획",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1320,
+        100
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "mbTelegram00001",
+          "name": "MiniBatch 텔레그램"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "path": "minibatch-series",
+        "formTitle": "MiniBatch 시리즈 계획",
+        "formDescription": "LLM 이 만든 시리즈 계획을 보고 승인합니다. 승인한 시리즈는 다음 생산 일정부터 1화씩 만들어집니다.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "승인자",
+              "placeholder": "운영자",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {
+          "buttonLabel": "목록 열기",
+          "appendAttribution": false
+        }
+      },
+      "id": "08cdeaa9-6387-5f2c-bfdd-e73f9f76b512",
+      "name": "시리즈 계획 승인 폼",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.3,
+      "position": [
+        0,
+        500
+      ],
+      "webhookId": "7a4e73a1-0af5-5d25-8cf8-024c6bf88589"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 설정: 여기 한 곳만 고친다. 텔레그램 chat id 는 비밀 값이 아니다 (봇 토큰은 자격 증명 'MiniBatch 텔레그램' 에)\nreturn [{ json: {\n  api: 'http://job-api:8080',                 // compose 안의 job-api 주소\n  chatId: 'CHAT_ID_를_여기에',                 // 25번 ③에서 확인한 내 chat id (숫자)\n  formBase: 'http://localhost:5678/form',     // 승인 폼 주소 (이 MacBook 브라우저에서 연다)\n  category: 'ai-it',\n} }];"
+      },
+      "id": "8a9156aa-dbed-57d0-bca8-34a63f64366e",
+      "name": "설정 ",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('설정 ').first().json.api }}/series?status=PROPOSED",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "15234c6b-4110-576c-862c-00486a8f4ccc",
+      "name": "승인 대기 계획",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        500
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mbJobApi0000001",
+          "name": "MiniBatch job-api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.first().json.items || [];\nreturn items.length ? items.map(s => ({ json: { id: s.id } })) : [{ json: { id: null } }];"
+      },
+      "id": "7d4ee20b-9708-562e-879a-16a131c0a29f",
+      "name": "계획 하나씩",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('설정 ').first().json.api }}/series/{{ $json.id || 'none' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "b1ece345-6027-5bbe-b128-c2c270236b56",
+      "name": "계획 상세",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        500
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mbJobApi0000001",
+          "name": "MiniBatch job-api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const esc = s => String(s ?? '').replace(/[<>&\"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '\"': '&quot;' }[c]));\nconst list = $input.all().map(i => i.json).filter(s => s && s.id && s.status === 'PROPOSED');\nif (!list.length) return [{ json: { empty: true, fields: [] } }];\nconst fields = [];\nfor (const s of list) {\n  const chars = (s.bible?.characters || []).map(c => `${esc(c.name)}(${esc(c.role)})`).join(', ');\n  const eps = (s.episodes || []).map(e => `<li><b>${esc(e.title)}</b> — ${esc(e.outline)}</li>`).join('');\n  fields.push({ fieldType: 'html', fieldName: `h_${s.id}`,\n                html: `<h3>${esc(s.title)}</h3><p>${esc(s.bible?.premise)}</p><p>인물: ${chars} · 말투: ${esc(s.bible?.tone)}</p><ol>${eps}</ol>` });\n  fields.push({ fieldType: 'dropdown', fieldName: s.id, fieldLabel: `${s.title} 결정`,\n                fieldOptions: { values: [{ option: '보류' }, { option: '승인' }] }, requiredField: true });\n}\nreturn [{ json: { empty: false, fields, order: list.map(s => s.id) } }];"
+      },
+      "id": "691d752d-be11-59f7-8d17-044326cb9bfa",
+      "name": "계획 폼 만들기",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.empty ? 1 : 0 }}"
+      },
+      "id": "4d475075-3386-52cc-8d82-55f0c1a1cebf",
+      "name": "승인할 계획 있나",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1320,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "page",
+        "defineForm": "json",
+        "jsonOutput": "={{ JSON.stringify($json.fields) }}",
+        "options": {
+          "formTitle": "MiniBatch 시리즈 계획",
+          "formDescription": "고칠 곳이 있으면 보류하고 알려 주세요(계획 수정은 API 로).",
+          "buttonLabel": "제출"
+        }
+      },
+      "id": "3d3cc46b-cda9-5684-898d-e16904d9882a",
+      "name": "계획 화면",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        1540,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "text",
+        "completionTitle": "승인 대기 계획이 없습니다",
+        "completionMessage": "남은 화가 10편보다 적어지면 매일 07시에 새 계획을 만듭니다.",
+        "options": {}
+      },
+      "id": "6805090a-7ec5-5c79-a17c-a4b4e32ebf0d",
+      "name": "끝: 승인 대기 계획 없음",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        1540,
+        660
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const by = $('계획 화면').first().json;\nconst who = $('시리즈 계획 승인 폼').first().json['승인자'] || '운영자';\nconst out = $('계획 폼 만들기').first().json.order.filter(id => by[id] === '승인').map(id => ({ json: { id, approvedBy: who } }));\nreturn out.length ? out : [{ json: { id: null } }];"
+      },
+      "id": "4306e120-3c3c-59bc-ac5b-cbbc5c882195",
+      "name": "승인 목록",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.id ? 0 : 1 }}"
+      },
+      "id": "d4522a8b-f338-509d-8d58-847b7fbb8b22",
+      "name": "승인할 것 있나",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1980,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('설정 ').first().json.api }}/series/{{ $json.id }}/approve",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ approvedBy: $json.approvedBy }) }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "0638585d-7953-58bd-98e3-7caa405a8f5a",
+      "name": "계획 승인 요청",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        320
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mbJobApi0000001",
+          "name": "MiniBatch job-api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const lines = $input.all().map(i => i.json).map(x => x.statusCode === 200 ? `${x.body.title} → ${x.body.status}` : `실패: ${x.body?.error?.message || x.statusCode}`);\nreturn [{ json: { message: lines.join('\\n') } }];"
+      },
+      "id": "e35bc90f-a002-5e33-bf31-39aa7620ae84",
+      "name": "승인 결과",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "text",
+        "completionTitle": "처리했습니다",
+        "completionMessage": "={{ $json.message }}",
+        "options": {}
+      },
+      "id": "99bc0dbd-89f8-5ad8-9ab8-f460b099f61e",
+      "name": "끝: 승인 결과",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        2640,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "text",
+        "completionTitle": "바꾼 것이 없습니다",
+        "completionMessage": "모두 보류했습니다.",
+        "options": {}
+      },
+      "id": "dad1687c-37d8-5328-ac14-9c897c2ce185",
+      "name": "끝: 바꾼 것 없음",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        2200,
+        520
+      ]
+    }
+  ],
+  "connections": {
+    "매시 50분 (남은 화 확인)": {
+      "main": [
+        [
+          {
+            "node": "설정",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "수동 실행": {
+      "main": [
+        [
+          {
+            "node": "설정",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "설정": {
+      "main": [
+        [
+          {
+            "node": "시리즈 목록",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "시리즈 목록": {
+      "main": [
+        [
+          {
+            "node": "계획이 필요한가",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "계획이 필요한가": {
+      "main": [
+        [
+          {
+            "node": "계획 만들기 (LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "계획 만들기 (LLM)": {
+      "main": [
+        [
+          {
+            "node": "알림 문장",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "알림 문장": {
+      "main": [
+        [
+          {
+            "node": "알림: 계획",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "시리즈 계획 승인 폼": {
+      "main": [
+        [
+          {
+            "node": "설정 ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "설정 ": {
+      "main": [
+        [
+          {
+            "node": "승인 대기 계획",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "승인 대기 계획": {
+      "main": [
+        [
+          {
+            "node": "계획 하나씩",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "계획 하나씩": {
+      "main": [
+        [
+          {
+            "node": "계획 상세",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "계획 상세": {
+      "main": [
+        [
+          {
+            "node": "계획 폼 만들기",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "계획 폼 만들기": {
+      "main": [
+        [
+          {
+            "node": "승인할 계획 있나",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "계획 화면": {
+      "main": [
+        [
+          {
+            "node": "승인 목록",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "승인 목록": {
+      "main": [
+        [
+          {
+            "node": "승인할 것 있나",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "계획 승인 요청": {
+      "main": [
+        [
+          {
+            "node": "승인 결과",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "승인 결과": {
+      "main": [
+        [
+          {
+            "node": "끝: 승인 결과",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "승인할 계획 있나": {
+      "main": [
+        [
+          {
+            "node": "계획 화면",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "끝: 승인 대기 계획 없음",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "승인할 것 있나": {
+      "main": [
+        [
+          {
+            "node": "계획 승인 요청",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "끝: 바꾼 것 없음",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Seoul",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": [],
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

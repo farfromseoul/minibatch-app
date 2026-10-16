@@ -74,6 +74,9 @@ class AppTestCase(unittest.TestCase):
     def make_youtube(self):
         return None  # 공개 전환 테스트는 가짜 YouTube 를 돌려주는 함수를 넣는다
 
+    def make_telegram(self):
+        return None  # 텔레그램 승인 테스트는 가짜 서버를 쓰는 TelegramBot 을 넣는다
+
     def extra_settings(self):
         return {}
 
@@ -107,6 +110,7 @@ class AppTestCase(unittest.TestCase):
             clock=self.clock,
             providers=self.make_providers(),
             youtube=self.make_youtube(),
+            telegram=self.make_telegram(),
         )
         self.client = TestClient(self.app)
         self.client.__enter__()  # lifespan(DB 이전, 재시작 복구) 실행

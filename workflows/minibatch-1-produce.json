@@ -1,0 +1,727 @@
+{
+  "name": "MiniBatch 1 생산 (하루 10편)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 6-23 * * *"
+            }
+          ]
+        }
+      },
+      "id": "39cbae04-e817-56df-b613-ee0ba1e755da",
+      "name": "매일 06시 몰아서, 07~23시 매시 이어서",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "21cf5828-2361-5648-a1a7-c3ff3b9599b7",
+      "name": "수동 실행",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 설정: 여기 한 곳만 고친다. 텔레그램 chat id 는 비밀 값이 아니다 (봇 토큰은 자격 증명 'MiniBatch 텔레그램' 에)\nreturn [{ json: {\n  api: 'http://job-api:8080',                 // compose 안의 job-api 주소\n  chatId: 'CHAT_ID_를_여기에',                 // 25번 ③에서 확인한 내 chat id (숫자)\n  formBase: 'http://localhost:5678/form',     // 승인 폼 주소 (이 MacBook 브라우저에서 연다)\n  category: 'ai-it',\n} }];"
+      },
+      "id": "57fed4ac-e48d-5a25-929c-a5cf2306fb79",
+      "name": "설정",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('설정').first().json.api }}/pipeline",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "51534848-c6f4-5869-9454-54f31573b0b0",
+      "name": "단계 순서",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        100
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mbJobApi0000001",
+          "name": "MiniBatch job-api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('설정').first().json.api }}/jobs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "d579c8d9-5011-59c3-a0bd-dbf2b8f68d7a",
+      "name": "작업 목록",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        100
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mbJobApi0000001",
+          "name": "MiniBatch job-api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 끝나지 않은 작업(앞 실행이 멈췄거나 할당량 대기)이 있으면 그것부터 잇는다\nconst items = $input.first().json.items || [];\nconst open = items.find(j => ['RUNNING', 'PENDING', 'WAITING'].includes(j.status));\nreturn [{ json: { jobId: open ? open.id : null } }];"
+      },
+      "id": "7e61318c-fe96-57d9-913c-668f4d4abc8a",
+      "name": "이어 할 작업 찾기",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.jobId ? 0 : 1 }}"
+      },
+      "id": "4c2d790e-da37-51cb-a2a0-1bda87182758",
+      "name": "이어 할 작업 있나",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1100,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('설정').first().json.api }}/jobs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "1c017c8f-35ac-57a8-9d0c-a3311f9102d9",
+      "name": "새 작업 만들기",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        260
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mbJobApi0000001",
+          "name": "MiniBatch job-api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 201 이면 새 작업. 409 는 하루 한도·검토 적체·앞 화 제작 중·후보 없음 (D15·D27)\nconst r = $input.first().json;\nif (r.statusCode === 201) return [{ json: { jobId: r.body.id } }];\nconst code = r.body?.error?.code || String(r.statusCode);\nconst msg = r.body?.error?.message || '';\nconst notify = ['no_candidates', 'review_backlog_full'].includes(code)\n  ? `ℹ️ MiniBatch: 새 작업을 만들지 않음 (${code})\\n${msg}` : null;\nreturn [{ json: { jobId: null, code, notify } }];"
+      },
+      "id": "66aa16b7-f84b-56d4-adf0-38cdf907ea48",
+      "name": "새 작업 결과",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 3,
+        "output": "={{ $json.jobId ? 0 : ($json.notify ? 1 : 2) }}"
+      },
+      "id": "ca73bf0a-e342-5094-af43-5f0db6f069fb",
+      "name": "만들었나",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1760,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('설정').first().json.chatId }}",
+        "text": "={{ $json.notify }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "30d1c216-feb8-55b2-acf3-9b719b969d93",
+      "name": "알림: 만들지 않음",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1980,
+        400
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "mbTelegram00001",
+          "name": "MiniBatch 텔레그램"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "af974949-8d19-5783-8bfd-8ee999a4e91c",
+      "name": "끝(할 일 없음)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1980,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { jobId: $input.first().json.jobId } }];"
+      },
+      "id": "29304fae-5a52-50a2-8432-243d512b292b",
+      "name": "작업 정함",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('설정').first().json.api }}/jobs/{{ $('작업 정함').first().json.jobId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "79cd79cf-f35f-57b4-9a7f-9aeb12a87392",
+      "name": "작업 상태",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        100
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mbJobApi0000001",
+          "name": "MiniBatch job-api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 생산 워크플로 \"다음 행동\" 판단. 작업 상세(GET /jobs/{id})와 단계 순서만 보고 정한다 (부작용 없음).\n// 행동: run(단계 요청) · poll(다시 보기) · reset(되돌리기) · done(검토 대기) · fail(알림) · stop(조용히 끝)\nfunction decide(job, pipeline, opt) {\n  const last = {};\n  for (const r of job.steps || []) last[r.step] = r; // 시도 순서대로 오므로 마지막이 지금 시도\n  const resets = (job.events || []).filter((e) => (e.reason || \"\").startsWith(\"reset from=\")).length;\n  const firstFailed = () => pipeline.map((s) => last[s]).find((r) => r && r.status === \"failed\");\n\n  if (job.status === \"REVIEW\") return { action: \"done\" };\n  if ([\"APPROVED\", \"SCHEDULED\", \"PUBLISHED\"].includes(job.status)) return { action: \"stop\", message: `이미 검토를 지났다: ${job.status}` };\n  if (job.status === \"REJECTED\") return { action: \"stop\", message: \"반려된 작업\" };\n  if (opt.runIndex >= opt.maxRuns) return { action: \"fail\", message: `너무 오래 끝나지 않는다 (확인 ${opt.runIndex}번)` };\n\n  if (job.status === \"FAILED\") {\n    const f = firstFailed();\n    if (!f) return { action: \"fail\", message: \"FAILED 인데 실패한 단계를 찾지 못했다\" };\n    const what = `${f.step} ${f.kind === \"deterministic\" ? \"결정적\" : f.kind === \"transient\" ? \"일시적\" : f.kind} 실패`;\n    if (f.kind === \"deterministic\" && f.retryFrom) {\n      if (resets < opt.maxResets) {\n        return { action: \"reset\", from: f.retryFrom, waitSec: 2, message: `${what} → ${f.retryFrom} 부터 다시 (${resets + 1}번째): ${f.error}` };\n      }\n      return { action: \"fail\", message: `${what}, 되돌리기 ${resets}번 뒤에도: ${f.error}` };\n    }\n    return { action: \"fail\", message: `${what}: ${f.error}` };\n  }\n\n  for (const step of pipeline) {\n    const r = last[step];\n    if (!r) return { action: \"run\", step, waitSec: 5 };\n    if (r.status === \"succeeded\") continue;\n    if (r.status === \"running\") return { action: \"poll\", step, waitSec: 10 };\n    if (r.status === \"failed\") {\n      if (r.kind === \"quota\") {\n        if (r.retryAt && new Date(r.retryAt) > opt.now) return { action: \"stop\", message: `할당량 초과, ${r.retryAt} 이후 다시 (다음 일정 실행이 잇는다)` };\n        return { action: \"run\", step, waitSec: 5 };\n      }\n      if (r.kind === \"transient\") return { action: \"run\", step, waitSec: 60 };\n      return { action: \"fail\", message: `${step} 실패(${r.kind}): ${r.error}` };\n    }\n  }\n  return { action: \"poll\", waitSec: 10 }; // 모든 단계가 끝났는데 아직 REVIEW 가 아니면 잠시 뒤 다시\n}\n\n// ---- n8n 에서 부르는 부분 (위 함수는 decide.test.mjs 로 시험)\nconst job = $input.first().json;\nconst pipeline = $('단계 순서').first().json.steps;\nconst d = decide(job, pipeline, { now: new Date(), runIndex: $runIndex, maxRuns: 360, maxResets: 2 });\nreturn [{ json: { ...d, jobId: job.id, topic: job.topic, seriesId: job.seriesId,\n                  episodeNumber: job.episodeNumber, url: job.publication?.url || null } }];"
+      },
+      "id": "56e27434-b202-5c41-8218-27eecda1f324",
+      "name": "다음 행동",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 4,
+        "output": "={{ ({ done: 0, fail: 1, stop: 2 })[$json.action] ?? 3 }}"
+      },
+      "id": "6ddbcc3e-4e11-5607-b350-d468e8c64e04",
+      "name": "행동",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        2860,
+        100
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "52eae5f3-32eb-5bc4-90b4-f6086332e30e",
+      "name": "다음 작업으로",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        3080,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('설정').first().json.chatId }}",
+        "text": "={{ `⚠️ MiniBatch 실패: ${$json.topic} (${$json.jobId})\\n${$json.message}` }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "5cbcd4c1-1370-5a4e-811d-d7e9aa3eb0cb",
+      "name": "알림: 실패",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3080,
+        20
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "mbTelegram00001",
+          "name": "MiniBatch 텔레그램"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "9476c8e8-0cf2-5a6d-999b-7cd5c5c1e584",
+      "name": "끝(멈춤)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        3080,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "amount": "={{ Math.max(1, $json.waitSec || 1) }}",
+        "unit": "seconds"
+      },
+      "id": "44d76bf1-75c8-5272-bd64-68d452e398a8",
+      "name": "기다리기",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3080,
+        340
+      ],
+      "webhookId": "9db3a1df-8189-5dc5-8331-2df71c4d300d"
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 3,
+        "output": "={{ ({ run: 0, reset: 1 })[$json.action] ?? 2 }}"
+      },
+      "id": "bdeb2e02-f6a4-5f36-b383-b1b013456880",
+      "name": "요청 종류",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        3300,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('설정').first().json.api }}/jobs/{{ $json.jobId }}/steps/{{ $json.step }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "684a0648-d6c3-5909-bb4f-6ce0ea0fd45d",
+      "name": "단계 요청",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3520,
+        260
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mbJobApi0000001",
+          "name": "MiniBatch job-api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('설정').first().json.api }}/jobs/{{ $json.jobId }}/reset?from={{ $json.from }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "5b50fb36-31c2-5173-917d-4b912ccf6d0b",
+      "name": "되돌리기",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3520,
+        440
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mbJobApi0000001",
+          "name": "MiniBatch job-api"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "매일 06시 몰아서, 07~23시 매시 이어서": {
+      "main": [
+        [
+          {
+            "node": "설정",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "수동 실행": {
+      "main": [
+        [
+          {
+            "node": "설정",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "설정": {
+      "main": [
+        [
+          {
+            "node": "단계 순서",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "단계 순서": {
+      "main": [
+        [
+          {
+            "node": "작업 목록",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "작업 목록": {
+      "main": [
+        [
+          {
+            "node": "이어 할 작업 찾기",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "이어 할 작업 찾기": {
+      "main": [
+        [
+          {
+            "node": "이어 할 작업 있나",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "새 작업 만들기": {
+      "main": [
+        [
+          {
+            "node": "새 작업 결과",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "새 작업 결과": {
+      "main": [
+        [
+          {
+            "node": "만들었나",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "작업 정함": {
+      "main": [
+        [
+          {
+            "node": "작업 상태",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "작업 상태": {
+      "main": [
+        [
+          {
+            "node": "다음 행동",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "다음 행동": {
+      "main": [
+        [
+          {
+            "node": "행동",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "다음 작업으로": {
+      "main": [
+        [
+          {
+            "node": "작업 목록",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "기다리기": {
+      "main": [
+        [
+          {
+            "node": "요청 종류",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "단계 요청": {
+      "main": [
+        [
+          {
+            "node": "작업 상태",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "되돌리기": {
+      "main": [
+        [
+          {
+            "node": "작업 상태",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "이어 할 작업 있나": {
+      "main": [
+        [
+          {
+            "node": "작업 정함",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "새 작업 만들기",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "만들었나": {
+      "main": [
+        [
+          {
+            "node": "작업 정함",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "알림: 만들지 않음",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "끝(할 일 없음)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "행동": {
+      "main": [
+        [
+          {
+            "node": "다음 작업으로",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "알림: 실패",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "끝(멈춤)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "기다리기",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "요청 종류": {
+      "main": [
+        [
+          {
+            "node": "단계 요청",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "되돌리기",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "작업 상태",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Seoul",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": [],
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

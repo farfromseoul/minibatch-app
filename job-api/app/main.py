@@ -22,6 +22,8 @@ from app.pipeline.pipeline import PIPELINE
 from app.pipeline.runner import Runner
 from app.pipeline.steps import default_steps
 from app.providers import load_providers
+from app.notify.approvals import TelegramApprovals
+from app.notify.telegram import TelegramBot
 from app.youtube.client import YouTube
 
 from .api.routes import api, public
@@ -41,7 +43,7 @@ def http_notify(url: str, payload: dict) -> None:
 def create_app(settings: Optional[Settings] = None, *, steps: Optional[dict] = None,
                pipeline: Optional[list[str]] = None, executor: Callable = thread_executor,
                notify: Callable = http_notify, clock: Callable = utcnow, providers=None,
-               youtube: Optional[Callable] = None) -> FastAPI:
+               youtube: Optional[Callable] = None, telegram: Optional[TelegramBot] = None) -> FastAPI:
     """테스트는 가짜 단계·즉시 실행기·가짜 시계·가짜 YouTube 를 넣는다. 실제 서버는 환경 변수로 정한다."""
 
     @asynccontextmanager
@@ -60,13 +62,23 @@ def create_app(settings: Optional[Settings] = None, *, steps: Optional[dict] = N
         app.state.providers = registry
         # 공개 전환(승인 뒤)에 쓰는 YouTube 연결부. 인증 파일은 부를 때 읽는다(없어도 서버는 뜬다)
         app.state.youtube_factory = youtube or YouTube.from_settings
+        # 텔레그램 승인 (D28): 넘겨받은 봇(테스트) → 설정 파일. 없으면 꺼진다
+        bot = telegram if telegram is not None else TelegramBot.from_settings(s)
+        app.state.telegram = (TelegramApprovals(bot, settings=s, db=app.state.db, clock=clock,
+                                                youtube_factory=app.state.youtube_factory) if bot else None)
+        app.state.telegram_poller = app.state.telegram
         app.state.runner = Runner(settings=s, db=app.state.db, pipeline=pipeline or PIPELINE, providers=registry,
                                   steps={**default_steps(), **(steps or {})},  # 넘겨준 단계가 기본을 덮는다
-                                  executor=executor, notify=notify, clock=clock)
+                                  executor=executor, notify=notify, clock=clock,
+                                  on_review=app.state.telegram.notify_review if app.state.telegram else None)
         recovered = app.state.runner.recover()  # 규칙 8
         if recovered:
             log.warning("재시작 복구: 실행 중으로 남은 시도 %d건을 일시적 실패로 기록", recovered)
+        if app.state.telegram is not None and telegram is None:  # 실제 서버만 받기 루프를 돌린다 (테스트는 poll_once)
+            app.state.telegram.start()
         yield
+        if app.state.telegram is not None:
+            app.state.telegram.stop()
         app.state.runner.wait_idle(30)
         engine.dispose()
 

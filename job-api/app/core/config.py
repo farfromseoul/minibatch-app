@@ -26,6 +26,9 @@ class Settings:
     # YouTube: 클라이언트 파일(compose secret)과 갱신 토큰 파일(폴더째 붙인다, 아키텍처 "비밀 값"). 실행계획 15번에서 만든다
     youtube_client_file: Path = Path("/run/secrets/youtube_client")
     youtube_token_file: Path = Path("/run/minibatch/youtube-token/youtube_token.json")
+    # 텔레그램 승인 (D28). 토큰 파일이나 chat id 가 없으면 이 기능만 꺼진다. chat id 는 비밀 값이 아니다
+    telegram_token_file: Path = Path("/run/secrets/telegram_bot_token")
+    telegram_chat_id: str = ""
     extra: dict = field(default_factory=dict)
 
     @classmethod
@@ -45,6 +48,8 @@ class Settings:
             render_worker_url=env.get("MINIBATCH_RENDER_WORKER_URL", "http://render-worker:8091"),
             youtube_client_file=Path(env.get("MINIBATCH_YOUTUBE_CLIENT_FILE", "/run/secrets/youtube_client")),
             youtube_token_file=Path(env.get("MINIBATCH_YOUTUBE_TOKEN_FILE", "/run/minibatch/youtube-token/youtube_token.json")),
+            telegram_token_file=Path(env.get("MINIBATCH_TELEGRAM_TOKEN_FILE", "/run/secrets/telegram_bot_token")),
+            telegram_chat_id=env.get("MINIBATCH_TELEGRAM_CHAT_ID", ""),
         )
 
     @property

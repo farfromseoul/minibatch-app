@@ -91,6 +91,10 @@ tests/                  # 단위 테스트 (unittest)
 | qc | ffprobe·ffmpeg(`ebur128`, `silencedetect`)로 길이 55~65초, 1080×1920·30fps, 프레임 수 ±1, AAC 1개, 무음 2.5초 이하, 자막이 영상 안·겹침 없음, 음량 -14±2 LUFS → `qc.json` | deterministic. `retry_from` = 길이 script, 자막 scenes, 무음 tts, 해상도·프레임·오디오·음량 render (어긋난 것 중 가장 앞) |
 | upload | 비공개 업로드(제목: 시리즈면 `시리즈 N화: 화 제목`, 아니면 제목 후보 1번. 설명: 후킹·요약·해시태그·시리즈 재생목록 링크, 끝에 고지 문구는 연결부가 항상 붙임). 시리즈면 재생목록(공개)을 처음 한 번 만들고 끝에 넣음 → `upload.json` | 할당량 quota(`retryAt` 태평양 자정 5분 뒤), 연결·5xx transient, 토큰 만료·4xx deterministic. 같은 파일은 다시 올리지 않음(`publication.uploaded_sha256`), 다시 렌더하면 새로 올리고 `replaces`에 앞 영상 ID |
 
+## 텔레그램 승인 (D28)
+
+작업이 REVIEW 가 되면 영상 링크와 [승인(공개)] [반려] 버튼, LLM 시리즈 계획이 만들어지면 [계획 승인] 버튼을 텔레그램으로 보낸다. 버튼 응답은 getUpdates(30초 롱 폴링)로 가져온다. 나가는 연결만 쓴다. `MINIBATCH_TELEGRAM_CHAT_ID` 대화에서 온 응답만 처리하고, 승인은 API 와 같은 함수(`app/publish/approve.py` `approve_and_publish`)로 한다. 처리 결과는 같은 메시지를 고쳐 버튼을 없앤다. 토큰 파일이나 chat id 가 없으면 이 기능만 꺼진다.
+
 ## 설정 (환경 변수)
 
 | 이름 | 기본값 |
@@ -105,6 +109,7 @@ tests/                  # 단위 테스트 (unittest)
 | `MINIBATCH_PROVIDERS_FILE` | `/etc/minibatch/providers.yaml` (없거나 틀리면 시작하지 않음) |
 | `MINIBATCH_RENDER_WORKER_URL` | `http://render-worker:8091` |
 | `MINIBATCH_YOUTUBE_CLIENT_FILE` | `/run/secrets/youtube_client` (데스크톱 앱 클라이언트 JSON) |
+| `MINIBATCH_TELEGRAM_TOKEN_FILE` / `MINIBATCH_TELEGRAM_CHAT_ID` | `/run/secrets/telegram_bot_token` / 빈 값 (둘 다 있어야 텔레그램 승인이 켜짐) |
 | `MINIBATCH_YOUTUBE_TOKEN_FILE` | `/run/minibatch/youtube-token/youtube_token.json` (실행계획 15번에서 만든 갱신 토큰. 없어도 서버는 뜨고 upload·publish 가 deterministic 실패) |
 
 uvicorn 작업자(worker)는 하나로 띄운다. 전역 잠금이 프로세스 안의 잠금이다.

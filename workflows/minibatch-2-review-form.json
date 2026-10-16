@@ -1,0 +1,489 @@
+{
+  "name": "MiniBatch 2 영상 검토 폼",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "minibatch-review",
+        "formTitle": "MiniBatch 영상 검토",
+        "formDescription": "검토 대기 영상을 승인(바로 공개)·반려합니다. 시리즈는 앞 화부터 승인해야 뒤 화 승인이 됩니다.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "승인자",
+              "placeholder": "운영자",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {
+          "buttonLabel": "목록 열기",
+          "appendAttribution": false
+        }
+      },
+      "id": "6d055e31-b43e-5f09-9fa8-d3e5ad152848",
+      "name": "영상 검토 폼",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.3,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "f173ac77-e021-5e4a-8af2-91fa754b31a6"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 설정: 여기 한 곳만 고친다. 텔레그램 chat id 는 비밀 값이 아니다 (봇 토큰은 자격 증명 'MiniBatch 텔레그램' 에)\nreturn [{ json: {\n  api: 'http://job-api:8080',                 // compose 안의 job-api 주소\n  chatId: 'CHAT_ID_를_여기에',                 // 25번 ③에서 확인한 내 chat id (숫자)\n  formBase: 'http://localhost:5678/form',     // 승인 폼 주소 (이 MacBook 브라우저에서 연다)\n  category: 'ai-it',\n} }];"
+      },
+      "id": "ea817803-c4e5-5a3a-9ba5-e1eb61743d1f",
+      "name": "설정",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('설정').first().json.api }}/jobs?status=REVIEW",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "549e7066-3242-5100-acf1-7cc0441651c8",
+      "name": "검토 대기 목록",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mbJobApi0000001",
+          "name": "MiniBatch job-api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.first().json.items || [];\nreturn items.length ? items.map(j => ({ json: { id: j.id } })) : [{ json: { id: null } }];"
+      },
+      "id": "e4bb38fb-6b0e-5e99-940c-09be06a3fa99",
+      "name": "작업 하나씩",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('설정').first().json.api }}/jobs/{{ $json.id || 'none' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "d14e7217-00ad-5c73-99c2-90aaa9ead270",
+      "name": "작업 상세",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mbJobApi0000001",
+          "name": "MiniBatch job-api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 시리즈·화 순서대로 보여 준다. 화마다 영상 링크와 승인/반려/보류, 반려 사유\nconst esc = s => String(s ?? '').replace(/[<>&\"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '\"': '&quot;' }[c]));\nconst jobs = $input.all().map(i => i.json).filter(j => j && j.id && j.status === 'REVIEW');\njobs.sort((a, b) => (a.seriesId || '~').localeCompare(b.seriesId || '~') || (a.episodeNumber || 0) - (b.episodeNumber || 0)\n                    || a.createdAt.localeCompare(b.createdAt));\nif (!jobs.length) return [{ json: { empty: true, fields: [] } }];\nconst fields = [];\nfor (const j of jobs) {\n  const vid = j.publication?.videoId;\n  const head = j.seriesId ? `${esc(j.seriesId)} ${j.episodeNumber}화` : '단독 주제';\n  const links = vid ? `<a href=\"https://www.youtube.com/shorts/${vid}\" target=\"_blank\">영상 보기(비공개)</a> · <a href=\"https://studio.youtube.com/video/${vid}/edit\" target=\"_blank\">Studio</a>` : '영상 없음';\n  fields.push({ fieldType: 'html', fieldName: `h_${j.id}`, html: `<h3>${head}: ${esc(j.topic)}</h3><p>${links} · ${esc(j.id)}</p>` });\n  fields.push({ fieldType: 'dropdown', fieldName: j.id, fieldLabel: `${head} 결정`,\n                fieldOptions: { values: [{ option: '보류' }, { option: '승인' }, { option: '반려' }] }, requiredField: true });\n  fields.push({ fieldType: 'text', fieldName: `${j.id}__reason`, fieldLabel: '반려 사유 (반려일 때)' });\n}\nreturn [{ json: { empty: false, fields, order: jobs.map(j => j.id) } }];"
+      },
+      "id": "1b2884b7-909c-5ea7-9e75-d32a201285bd",
+      "name": "폼 만들기",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.empty ? 1 : 0 }}"
+      },
+      "id": "4fe45dce-e6c1-5cde-908a-5629d64f5f3c",
+      "name": "검토할 영상 있나",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "page",
+        "defineForm": "json",
+        "jsonOutput": "={{ JSON.stringify($json.fields) }}",
+        "options": {
+          "formTitle": "MiniBatch 영상 검토",
+          "formDescription": "시리즈는 앞 화부터 승인해야 합니다. 앞 화를 보류하면 같은 시리즈 뒤 화 승인은 거절됩니다.",
+          "buttonLabel": "제출"
+        }
+      },
+      "id": "386dd6ec-b360-52c9-878d-6dbe12bfda27",
+      "name": "검토 화면",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        1540,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "text",
+        "completionTitle": "검토 대기 영상이 없습니다",
+        "completionMessage": "새 영상이 만들어지면 텔레그램으로 알립니다.",
+        "options": {}
+      },
+      "id": "187a1090-41a8-5e27-9e20-937ff294ef03",
+      "name": "끝: 검토 대기 없음",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        1540,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 폼에서 고른 것을 화 순서대로 요청 목록으로 만든다 (보류는 빼고)\nconst by = $('검토 화면').first().json;\nconst who = $('영상 검토 폼').first().json['승인자'] || '운영자';\nconst out = [];\nfor (const id of $('폼 만들기').first().json.order) {\n  const d = by[id];\n  if (d === '승인') out.push({ json: { jobId: id, path: 'approve', body: { approvedBy: who } } });\n  if (d === '반려') out.push({ json: { jobId: id, path: 'reject', body: { rejectedBy: who, reason: by[`${id}__reason`] || '사유 없음' } } });\n}\nreturn out.length ? out : [{ json: { jobId: null } }];"
+      },
+      "id": "1df44ba1-6814-59e9-85b8-8635c85c7c49",
+      "name": "처리 목록",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.jobId ? 0 : 1 }}"
+      },
+      "id": "8633e632-ca6e-50b2-a12b-08c093335159",
+      "name": "처리할 것 있나",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1980,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "227ed50c-53d8-5ef2-8ebd-92220e0525b6",
+      "name": "한 화씩",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2200,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('설정').first().json.api }}/jobs/{{ $json.jobId }}/{{ $json.path }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "9429dd6e-eeed-5a65-ac13-eb3b9dd58707",
+      "name": "승인·반려 요청",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        -120
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mbJobApi0000001",
+          "name": "MiniBatch job-api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 요청 목록과 응답을 차례로 맞춘다\nconst req = $('처리 목록').all().map(i => i.json);\nconst res = $input.all().map(i => i.json);\nconst lines = req.map((r, i) => {\n  const x = res[i] || {};\n  const ok = x.statusCode === 200;\n  const pub = x.body?.publish;\n  const tail = ok ? (r.path === 'approve' ? (pub?.ok ? `→ ${pub.status}` : `승인됨, 공개 실패: ${pub?.error || pub?.skipped || ''}`) : '→ 반려')\n                  : `실패: ${x.body?.error?.message || x.statusCode}`;\n  return `${r.jobId} ${r.path === 'approve' ? '승인' : '반려'} ${tail}`;\n});\nreturn [{ json: { message: lines.join('\\n') } }];"
+      },
+      "id": "306ce585-7ab6-536f-87b5-9614c89c751c",
+      "name": "결과 정리",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "text",
+        "completionTitle": "처리했습니다",
+        "completionMessage": "={{ $json.message }}",
+        "options": {}
+      },
+      "id": "3892b745-028e-5da2-862a-7c253c4161a7",
+      "name": "끝: 결과",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        2640,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "text",
+        "completionTitle": "바꾼 것이 없습니다",
+        "completionMessage": "모두 보류했습니다.",
+        "options": {}
+      },
+      "id": "0d0a57e6-aee8-5d96-89f9-4ff2466c8aba",
+      "name": "끝: 바꾼 것 없음",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        2200,
+        60
+      ]
+    }
+  ],
+  "connections": {
+    "영상 검토 폼": {
+      "main": [
+        [
+          {
+            "node": "설정",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "설정": {
+      "main": [
+        [
+          {
+            "node": "검토 대기 목록",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "검토 대기 목록": {
+      "main": [
+        [
+          {
+            "node": "작업 하나씩",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "작업 하나씩": {
+      "main": [
+        [
+          {
+            "node": "작업 상세",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "작업 상세": {
+      "main": [
+        [
+          {
+            "node": "폼 만들기",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "폼 만들기": {
+      "main": [
+        [
+          {
+            "node": "검토할 영상 있나",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "검토 화면": {
+      "main": [
+        [
+          {
+            "node": "처리 목록",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "처리 목록": {
+      "main": [
+        [
+          {
+            "node": "처리할 것 있나",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "승인·반려 요청": {
+      "main": [
+        [
+          {
+            "node": "한 화씩",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "결과 정리": {
+      "main": [
+        [
+          {
+            "node": "끝: 결과",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "검토할 영상 있나": {
+      "main": [
+        [
+          {
+            "node": "검토 화면",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "끝: 검토 대기 없음",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "처리할 것 있나": {
+      "main": [
+        [
+          {
+            "node": "한 화씩",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "끝: 바꾼 것 없음",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "한 화씩": {
+      "main": [
+        [
+          {
+            "node": "결과 정리",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "승인·반려 요청",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Seoul",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": [],
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

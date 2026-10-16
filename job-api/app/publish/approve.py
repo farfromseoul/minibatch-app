@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.core.category import load_category
 from app.core.errors import ApiError
 from app.db.models import Episode, Job, Publication
+from app.domain import review
 from app.domain.status import set_status
 from app.pipeline.steps.publishing import DEFAULT_DISCLOSURE
 from app.youtube.client import YouTubeError
@@ -76,3 +77,19 @@ def _link_previous(s: Session, settings, job: Job, youtube, video_id: str) -> li
         # 이미 공개됐으므로 publish 를 다시 부르지 않는다(409). 링크는 YouTube Studio 에서 손으로 단다
         return [f"{n - 1}화 설명란에 다음 화 링크를 달지 못했다({e.kind}): {e.message}. Studio 에서 손으로 단다: {text}"]
     return []
+
+
+def approve_and_publish(s: Session, settings, job: Job, now: datetime, who: str, publish_at,
+                        youtube_factory: Callable[[Any], Any]) -> dict[str, Any]:
+    """승인을 기록(커밋)하고, 영상이 올라가 있으면 바로 공개 전환한다. YouTube 가 실패해도 승인은 남는다 (APPROVED)"""
+    review.approve(s, settings, job, now, who, publish_at)
+    s.commit()
+    if not has_video(s, job):
+        return {"ok": False, "skipped": "업로드된 영상이 없다"}
+    try:
+        result = publish(s, settings, job, youtube_factory, now)
+        s.commit()
+        return result
+    except YouTubeError as e:
+        s.rollback()
+        return {"ok": False, "kind": e.kind, "error": e.message}

@@ -254,16 +254,8 @@ def approve(job_id: str, body: ApproveBody, request: Request) -> dict[str, Any]:
     st = _st(request)
     with st.db() as s:
         job = _get_job(s, job_id)
-        review.approve(s, st.settings, job, st.clock(), body.approvedBy, body.publishAt)
-        s.commit()
-        if not publishing.has_video(s, job):
-            return {**job_summary(job), "publish": {"ok": False, "skipped": "업로드된 영상이 없다"}}
-        try:
-            result = publishing.publish(s, st.settings, job, st.youtube_factory, st.clock())
-            s.commit()
-        except YouTubeError as e:
-            s.rollback()
-            result = {"ok": False, "kind": e.kind, "error": e.message}
+        result = publishing.approve_and_publish(s, st.settings, job, st.clock(), body.approvedBy, body.publishAt,
+                                                st.youtube_factory)
         return {**job_summary(job), "publish": result}
 
 
@@ -307,7 +299,10 @@ def post_series(body: SeriesBody, request: Request) -> dict[str, Any]:
             series = generation.generate_series_plan(s, st.settings, st.clock(), llm, key=key, category=body.category,
                                                      title=body.title, count=body.episodeCount, bible=body.bible or None)
             s.commit()
-            return series_detail(s, series)
+            detail = series_detail(s, series)
+        if st.telegram is not None:  # [계획 승인] 버튼 (D28)
+            st.telegram.notify_plan(detail["id"])
+        return detail
     if not body.key or not body.title:
         raise ApiError(422, "invalid_request", "화별 계획을 직접 줄 때는 key 와 title 이 필요하다")
     with st.db() as s:
