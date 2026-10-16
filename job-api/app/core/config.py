@@ -20,6 +20,9 @@ class Settings:
     duplicate_window_days: int = 30  # 기획서 성공 기준 9
     # 제공자 설정 파일. None 이면 읽지 않는다(LLM 단계는 실패). 실제 서버는 환경 변수로 늘 지정한다
     providers_file: Path | None = None
+    # 렌더링은 항상 Remotion (D5) 이라 제공자가 아닌 고정 주소다
+    render_worker_url: str = "http://render-worker:8091"
+    render_timeout_sec: int = 1800
     extra: dict = field(default_factory=dict)
 
     @classmethod
@@ -36,6 +39,7 @@ class Settings:
             disk_free_warn_gb=int(env.get("MINIBATCH_DISK_FREE_WARN_GB", "50")),
             resume_url_prefix=env.get("MINIBATCH_RESUME_URL_PREFIX", "http://n8n:5678/"),
             providers_file=Path(env.get("MINIBATCH_PROVIDERS_FILE", "/etc/minibatch/providers.yaml")),
+            render_worker_url=env.get("MINIBATCH_RENDER_WORKER_URL", "http://render-worker:8091"),
         )
 
     @property

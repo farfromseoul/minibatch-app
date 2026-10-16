@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { entrance, fitFontSize, flowLayout, revealCount, SAFE } from "../src/lib/layout.ts";
+import { CONTENT_BOTTOM, entrance, fitFontSize, flowLayout, revealCount, SAFE } from "../src/lib/layout.ts";
 
 test("흐름도는 화살표 방향으로 위에서 아래로 층을 나눈다", () => {
   const pos = flowLayout(
@@ -22,7 +22,7 @@ test("같은 층의 노드는 가로로 나란히, 화면 안에 놓인다", () 
   assert.notEqual(b.x, c.x);
   for (const p of pos) {
     assert.ok(p.x > 0 && p.x < 1080);
-    assert.ok(p.y >= SAFE.top && p.y <= 1920 - SAFE.bottom, `${p.id} y=${p.y}`);
+    assert.ok(p.y >= SAFE.top && p.y + 60 <= CONTENT_BOTTOM(1920), `${p.id} y=${p.y}`); // 상자 아래 끝이 자막 자리 위
   }
 });
 

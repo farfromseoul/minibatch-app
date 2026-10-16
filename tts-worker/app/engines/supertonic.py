@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
+from typing import Optional
 
 import soundfile as sf
 
@@ -17,18 +18,30 @@ class SupertonicEngine:
     name = "supertonic"
 
     def __init__(self, model_dir: Path, voice: str):
-        style_path = model_dir / "voice_styles" / f"{voice}.json"
-        if not style_path.is_file():
-            available = sorted(p.stem for p in (model_dir / "voice_styles").glob("*.json"))
-            raise ValueError(f"목소리 {voice} 가 없다. 쓸 수 있는 목소리: {available}")
+        self._styles_dir = model_dir / "voice_styles"
+        self.voices = sorted(p.stem for p in self._styles_dir.glob("*.json"))
+        if voice not in self.voices:
+            raise ValueError(f"목소리 {voice} 가 없다. 쓸 수 있는 목소리: {self.voices}")
+        self.default_voice = voice
         self._tts = load_text_to_speech(str(model_dir / "onnx"))
-        self._style = load_voice_style([str(style_path)])
+        self._styles: dict = {}  # 목소리 파일은 작아서 처음 쓸 때 읽어 둔다 (카테고리마다 목소리, D23)
         self.sample_rate = int(self._tts.sample_rate)
         self._lock = threading.Lock()  # ONNX 세션을 요청끼리 동시에 쓰지 않는다
 
-    def synthesize(self, text: str, out_path: Path) -> float:
+    def has_voice(self, voice: str) -> bool:
+        return voice in self.voices
+
+    def _style(self, voice: str):
+        if voice not in self._styles:
+            self._styles[voice] = load_voice_style([str(self._styles_dir / f"{voice}.json")])
+        return self._styles[voice]
+
+    def synthesize(self, text: str, out_path: Path, voice: Optional[str] = None) -> float:
+        voice = voice or self.default_voice
+        if not self.has_voice(voice):
+            raise ValueError(f"목소리 {voice} 가 없다")
         with self._lock:
-            wav, duration = self._tts(text, LANG, self._style, TOTAL_STEP, SPEED)
+            wav, duration = self._tts(text, LANG, self._style(voice), TOTAL_STEP, SPEED)
         samples = wav[0, : int(self.sample_rate * float(duration[0]))]
         sf.write(str(out_path), samples, self.sample_rate, subtype="PCM_16")
         return len(samples) / self.sample_rate

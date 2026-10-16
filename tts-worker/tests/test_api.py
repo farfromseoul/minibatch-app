@@ -15,12 +15,19 @@ class FakeEngine:
     name = "fake"
     sample_rate = 16000
 
+    voices = {"M1", "F1"}
+
     def __init__(self, fail_on=None):
         self.calls = []
+        self.voices_used = []
         self.fail_on = fail_on
 
-    def synthesize(self, text, out_path):
+    def has_voice(self, voice):
+        return voice in self.voices
+
+    def synthesize(self, text, out_path, voice=None):
         self.calls.append(text)
+        self.voices_used.append(voice)
         if self.fail_on and self.fail_on in text:
             raise RuntimeError("합성 실패")
         frames = int(self.sample_rate * 0.1 * len(text))
@@ -100,6 +107,24 @@ class SynthesizeTest(ApiTestBase):
             sentences=[{"id": "s01", "text": "가"}, {"id": "s01", "text": "나"}]))
 
         self.assertEqual(res.status_code, 422)
+
+    def test_voice_is_passed_to_engine(self):
+        res = self.client.post("/synthesize", json=self.body(voice="F1"))
+
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(self.engine.voices_used, ["F1", "F1"])
+
+    def test_without_voice_engine_default_is_used(self):
+        self.client.post("/synthesize", json=self.body())
+
+        self.assertEqual(self.engine.voices_used, [None, None])
+
+    def test_unknown_voice_is_400_before_synthesis(self):
+        res = self.client.post("/synthesize", json=self.body(voice="Z9"))
+
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("Z9", res.json()["detail"])
+        self.assertEqual(self.engine.calls, [])
 
     def test_engine_failure_returns_500_with_sentence_id(self):
         self.engine.fail_on = "라마"

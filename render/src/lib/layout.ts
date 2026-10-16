@@ -6,6 +6,11 @@ import type { AnimationPreset } from "./timeline.ts";
 /** 쇼츠 화면에서 제목·버튼이 가리는 위·아래 영역 (수치 미확인, 실제 업로드 화면으로 확인) */
 export const SAFE = { top: 250, bottom: 400, side: 60 };
 
+/** 자막(최대 두 줄) 자리. 화면 내용은 SAFE.bottom + SUBTITLE_ZONE 위에 둔다
+ *  (2026-10-16 첫 전체 영상: 두 줄 자막이 흐름도 맨 아래 상자를 가림) */
+export const SUBTITLE_ZONE = 300;
+export const CONTENT_BOTTOM = (height: number) => height - SAFE.bottom - SUBTITLE_ZONE;
+
 export type Point = { id: string; x: number; y: number };
 
 /** 화살표 방향으로 층(rank)을 나눠 위→아래로 놓는다. 세로 화면 기본 배치 (앱 설계 FlowDiagram) */
@@ -25,7 +30,7 @@ export function flowLayout(ids: string[], edges: [string, string][], size: { wid
   }
   const levels = Math.max(...rank.values()) + 1;
   const top = SAFE.top + 120;
-  const bottom = size.height - SAFE.bottom - 220; // 자막 자리를 비운다
+  const bottom = CONTENT_BOTTOM(size.height) - 80; // 상자 높이 절반 + 여유
   const stepY = levels > 1 ? (bottom - top) / (levels - 1) : 0;
   const byLevel = new Map<number, string[]>();
   for (const id of ids) {

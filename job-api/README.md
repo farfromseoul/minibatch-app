@@ -14,7 +14,7 @@ app/
     pipeline.py         # 단계 순서 PIPELINE
     runner.py           # 단계 실행 규칙 1~8
     files.py            # 해시 (멱등 판정)
-    steps/              # 단계 구현: topic, script, review, scenes (나머지는 20-d2·d3)
+    steps/              # 단계 구현: topic, script, review, scenes, tts, timeline, visuals, render (qc·upload 는 20-d3)
   llm/                  # LLM 연결부, 재요청, 프롬프트 파일
   providers.py          # providers.yaml 읽기·검사
   schemas/templates.py  # 템플릿 속성 규격
@@ -70,6 +70,15 @@ tests/                  # 단위 테스트 (unittest)
 - 템플릿 속성 규격: `app/schemas/templates.py` (render 의 `src/lib/timeline.ts`와 같은 규칙. 바꿀 때 함께).
 - 제공자: `providers.yaml`(`MINIBATCH_PROVIDERS_FILE`). 시작할 때 검사하고 틀리면 시작하지 않는다. TTS 에 `chars_per_sec` 필요.
 
+## 작업자 단계 (tts · timeline · visuals · render)
+
+| 단계 | 하는 일 | 실패 |
+| --- | --- | --- |
+| tts | 발음 사전(`content/pronunciation.yaml`) 적용 → tts-worker `POST /synthesize`(카테고리 목소리) → `tts/`, `tts.json`(원문·읽는 문장·길이) | 연결 실패·시간 초과·5xx transient, 4xx deterministic |
+| timeline | 음성 길이로 장면·자막·음성 시작 프레임 확정(`app/pipeline/timeline_calc.py`) | 55~65초 밖이면 deterministic `retry_from=script` |
+| visuals | 생성 클립 장면만 처리. `clip_engine: none`이면 그대로 통과 | 생성기는 Phase 2 |
+| render | render-worker `POST /render`(`MINIBATCH_RENDER_WORKER_URL`) → `render/final.mp4` | 409·5xx transient, 422 deterministic `retry_from=scenes` |
+
 ## 설정 (환경 변수)
 
 | 이름 | 기본값 |
@@ -82,6 +91,7 @@ tests/                  # 단위 테스트 (unittest)
 | `MINIBATCH_DISK_FREE_WARN_GB` | 50 |
 | `MINIBATCH_RESUME_URL_PREFIX` | `http://n8n:5678/` (재개 주소는 이 주소로 시작해야 함) |
 | `MINIBATCH_PROVIDERS_FILE` | `/etc/minibatch/providers.yaml` (없거나 틀리면 시작하지 않음) |
+| `MINIBATCH_RENDER_WORKER_URL` | `http://render-worker:8091` |
 
 uvicorn 작업자(worker)는 하나로 띄운다. 전역 잠금이 프로세스 안의 잠금이다.
 

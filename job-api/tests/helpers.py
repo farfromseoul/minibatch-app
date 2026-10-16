@@ -71,6 +71,9 @@ class AppTestCase(unittest.TestCase):
     def make_providers(self):
         return None  # LLM 단계 테스트는 가짜 레지스트리를 넣는다
 
+    def extra_settings(self):
+        return {}
+
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         root = pathlib.Path(self._tmp.name)
@@ -85,6 +88,7 @@ class AppTestCase(unittest.TestCase):
             content_dir=root / "content",
             daily_job_limit=3,
             review_backlog_limit=6,
+            **self.extra_settings(),
         )
         self.clock = Clock()
         self.resumed = []

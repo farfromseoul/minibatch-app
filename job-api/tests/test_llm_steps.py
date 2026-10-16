@@ -79,7 +79,7 @@ class ScriptStepTest(LlmStepCase):
         job_id = self.job_until("script")
 
         s = self.read(job_id, "script.json")
-        self.assertLessEqual(s["meta"]["charCount"], round(TARGET * 1.05))
+        self.assertLessEqual(s["meta"]["charCount"], round(TARGET * 1.04))
         self.assertEqual(len(self.llm.requests), 1)  # 다시 묻지 않고 코드가 맞춘다
         self.assertTrue(s["summary"].startswith("문장91"))  # 요약은 남는다
         self.assertEqual(len(s["meta"]["trimmedSentences"]), 4)

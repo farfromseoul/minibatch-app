@@ -28,12 +28,18 @@ class FakeLlm:
 
 
 class FakeRegistry:
-    def __init__(self, llm, chars_per_sec=5.6):
+    def __init__(self, llm, chars_per_sec=5.6, tts_url="http://tts-worker:8090"):
         self._llm = llm
         self.chars_per_sec = chars_per_sec
+        self.tts_url = tts_url
+        self.clip_engine = "none"
 
     def llm(self, step):
         return self._llm
+
+    def tts_settings(self):
+        return {"kind": "http-worker", "url": self.tts_url, "engine": "supertonic", "voice": "M1",
+                "sample_rate": 44100, "chars_per_sec": self.chars_per_sec, "timeout_sec": 30}
 
 
 def transient(msg="LM Studio 응답 없음"):

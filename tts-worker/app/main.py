@@ -35,6 +35,7 @@ class Sentence(BaseModel):
 
 class SynthesizeRequest(BaseModel):
     out_dir: str
+    voice: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,32}$")  # 없으면 엔진 기본 목소리
     sentences: list[Sentence] = Field(min_length=1)
 
     @field_validator("sentences")
@@ -91,13 +92,15 @@ def create_app(engine: Optional[Engine] = None, data_dir: Optional[Path] = None)
         out_dir = Path(req.out_dir)
         if not out_dir.is_absolute() or not _inside(state["data_dir"], out_dir):
             raise HTTPException(400, f"out_dir 는 데이터 폴더({state['data_dir']}) 안이어야 한다")
-        out_dir.mkdir(parents=True, exist_ok=True)
         eng = state["engine"]
+        if req.voice and not eng.has_voice(req.voice):
+            raise HTTPException(400, f"없는 목소리: {req.voice}")
+        out_dir.mkdir(parents=True, exist_ok=True)
         items = []
         for s in req.sentences:
             path = out_dir / f"{s.id}.wav"
             try:
-                seconds = eng.synthesize(s.text, path)
+                seconds = eng.synthesize(s.text, path, voice=req.voice)
             except Exception as e:  # 어느 문장에서 실패했는지 돌려준다. job-api 가 재시도를 정한다
                 log.exception("합성 실패: %s", s.id)
                 raise HTTPException(500, f"문장 {s.id} 합성 실패: {type(e).__name__}: {e}")

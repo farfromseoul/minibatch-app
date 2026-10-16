@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol
+from typing import Optional, Protocol
 
 
 class Engine(Protocol):
@@ -10,4 +10,8 @@ class Engine(Protocol):
     name: str
     sample_rate: int
 
-    def synthesize(self, text: str, out_path: Path) -> float: ...
+    def has_voice(self, voice: str) -> bool: ...
+
+    def synthesize(self, text: str, out_path: Path, voice: Optional[str] = None) -> float:
+        """voice 가 없으면 엔진 기본 목소리 (MINIBATCH_TTS_VOICE)"""
+        ...

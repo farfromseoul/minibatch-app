@@ -1,7 +1,7 @@
 import React from "react";
 import { AbsoluteFill, useCurrentFrame } from "remotion";
 
-import { revealCount, SAFE } from "../lib/layout";
+import { revealCount, SAFE, SUBTITLE_ZONE } from "../lib/layout";
 import type { SceneProps } from "./common";
 
 type Props = { points: string[] };
@@ -10,7 +10,7 @@ export const SummaryScene: React.FC<SceneProps<Props>> = ({ durationInFrames, th
   const frame = useCurrentFrame();
   const shown = revealCount(frame, durationInFrames, props.points.length);
   return (
-    <AbsoluteFill style={{ padding: `${SAFE.top + 40}px ${SAFE.side + 20}px ${SAFE.bottom + 200}px`, justifyContent: "center", gap: 48 }}>
+    <AbsoluteFill style={{ padding: `${SAFE.top + 40}px ${SAFE.side + 20}px ${SAFE.bottom + SUBTITLE_ZONE}px`, justifyContent: "center", gap: 48 }}>
       <div style={{ fontSize: 72, fontWeight: 800, color: theme.accent2 }}>정리</div>
       {props.points.slice(0, shown).map((p, i) => (
         <div key={p} style={{ display: "flex", gap: 28, alignItems: "flex-start" }}>

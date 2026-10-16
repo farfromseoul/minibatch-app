@@ -46,6 +46,17 @@ class SupertonicEngineTest(unittest.TestCase):
                     chars = len(text.replace(" ", ""))
                     self.assertTrue(0.05 * chars < seconds < 0.5 * chars, seconds)
 
+    def test_other_voice_per_request(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "f1.wav"
+
+            seconds = self.engine.synthesize("목소리를 바꿔 봅니다.", path, voice="F1")
+
+            self.assertTrue(path.is_file())
+            self.assertGreater(seconds, 0.5)
+        self.assertTrue(self.engine.has_voice("F5"))
+        self.assertFalse(self.engine.has_voice("없는목소리"))
+
     def test_unknown_voice_lists_available_ones(self):
         from app.engines import load_engine
 

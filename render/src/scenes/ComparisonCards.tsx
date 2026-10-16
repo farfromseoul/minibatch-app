@@ -1,7 +1,7 @@
 import React from "react";
 import { AbsoluteFill } from "remotion";
 
-import { SAFE } from "../lib/layout";
+import { SAFE, SUBTITLE_ZONE } from "../lib/layout";
 import { Enter, type SceneProps } from "./common";
 
 type Side = { title: string; points: string[] };
@@ -19,7 +19,7 @@ export const ComparisonCards: React.FC<SceneProps<Props>> = ({ durationInFrames,
     </div>
   );
   return (
-    <AbsoluteFill style={{ padding: `${SAFE.top + 40}px ${SAFE.side}px ${SAFE.bottom + 160}px`, gap: 40, justifyContent: "center" }}>
+    <AbsoluteFill style={{ padding: `${SAFE.top + 40}px ${SAFE.side}px ${SAFE.bottom + SUBTITLE_ZONE}px`, gap: 40, justifyContent: "center" }}>
       <Enter duration={durationInFrames} preset={animationPreset}>{card(props.left, theme.accent)}</Enter>
       <Enter duration={durationInFrames} preset={animationPreset}>{card(props.right, theme.accent2)}</Enter>
     </AbsoluteFill>

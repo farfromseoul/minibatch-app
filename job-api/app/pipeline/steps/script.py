@@ -18,6 +18,10 @@ from .base import StepContext, StepFailure
 from .llm_common import ask, meta_of
 
 LENGTH_TAG = "글자 수"
+# 대본 글자 수 허용 오차. 영상 길이 허용(55~65초)이 ±8% 라 그보다 좁게 둔다
+# (2026-10-16 첫 전체 실행: ±10% 로 통과시킨 대본이 timeline 에서 66.3초로 걸림)
+TOLERANCE = 0.07
+TRIM_TO = 1.04
 # 모델은 글자 수를 세는 데 약하고 문장 개수는 잘 지킨다. 2026-10-16 qwen/qwen3.8-27b 실측:
 # 글자 수로 요청 → 302자 목표에 171자(8문장). 13문장으로 요청 → 13문장 230자(문장당 17.7자, "20자 이상" 지시는 안 지킴).
 # 17문장으로 요청 → 351자(문장당 20.6자, 주제마다 다름). "줄여서·늘려서" 피드백은 잘 반영하지 못한다.
@@ -93,7 +97,7 @@ class ScriptStep:
                 if count_chars(sentence) > max_sentence:
                     problems.append(f"{i}번째 문장이 {count_chars(sentence)}자다. {max_sentence}자 이내로 나눈다: {sentence}")
             total = sum(count_chars(t) for t in [data["hook"], *data["body"], data["summary"]])
-            if abs(total - target) > target * 0.1:
+            if abs(total - target) > target * TOLERANCE:
                 gap = abs(target - total)
                 more = math.ceil(gap / CHARS_PER_SENTENCE)
                 if total < target:
@@ -103,7 +107,7 @@ class ScriptStep:
             return problems
 
         def trim(data: Any) -> Any:
-            """길면 body 끝 문장부터 빼서 목표 +5% 안으로 (body 는 최소 3문장 남긴다)"""
+            """길면 body 끝 문장부터 빼서 목표 +4% 안으로 (body 는 최소 3문장 남긴다)"""
             if not isinstance(data, dict) or not isinstance(data.get("body"), list):
                 return data
             data = dict(data, body=list(data["body"]))
@@ -111,7 +115,7 @@ class ScriptStep:
 
             def total() -> int:
                 return sum(count_chars(t) for t in [data.get("hook", ""), *data["body"], data.get("summary", "")])
-            while total() > target * 1.05 and len(data["body"]) > 3:
+            while total() > target * TRIM_TO and len(data["body"]) > 3:
                 ctx.meta.setdefault("trimmed", []).append(data["body"].pop())
             return data
 

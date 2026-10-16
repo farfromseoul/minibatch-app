@@ -1,7 +1,7 @@
 import React from "react";
 import { AbsoluteFill, useCurrentFrame } from "remotion";
 
-import { revealCount, SAFE } from "../lib/layout";
+import { CONTENT_BOTTOM, revealCount, SAFE } from "../lib/layout";
 import type { SceneProps } from "./common";
 
 type Props = { layers: number[]; highlight?: { layer: number; node: number }; labels?: string[] };
@@ -10,7 +10,7 @@ export const NeuralNetwork: React.FC<SceneProps<Props>> = ({ durationInFrames, t
   const frame = useCurrentFrame();
   const visibleLayers = revealCount(frame, durationInFrames, props.layers.length); // 층이 하나씩 켜진다
   const top = SAFE.top + 160;
-  const bottom = 1920 - SAFE.bottom - 260;
+  const bottom = CONTENT_BOTTOM(1920) - 50;
   const layerY = (i: number) => top + ((bottom - top) * i) / Math.max(1, props.layers.length - 1);
   const nodeX = (count: number, j: number) => SAFE.side + ((1080 - SAFE.side * 2) * (j + 1)) / (count + 1);
   const r = 34;
