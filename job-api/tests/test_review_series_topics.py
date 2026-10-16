@@ -78,16 +78,17 @@ class SeriesTest(AppTestCase):
 
         self.assertEqual(res.status_code, 503)  # 이 테스트는 providers.yaml 없이 돈다 (생성은 tests/test_generation.py)
 
-    def test_next_episode_waits_for_previous_approval(self):
+    def test_next_episode_waits_until_previous_is_produced(self):
+        # D27 (2026-10-16): 앞 화 승인 전이라도 앞 화가 다 만들어졌으면(REVIEW) 다음 화를 미리 만든다
         series_id = self.create_series()
-        job1 = self.produce_and_review(series_id)
+        job1 = self.post("/jobs", {"seriesId": series_id}).json()["id"]
 
-        blocked = self.post("/jobs", {"seriesId": series_id})
-        self.post(f"/jobs/{job1}/approve", {"approvedBy": "운영자"})
-        allowed = self.post("/jobs", {"seriesId": series_id})
+        blocked = self.post("/jobs", {"seriesId": series_id})  # 1화가 아직 PENDING
+        self.run_until(job1, "review")
+        allowed = self.post("/jobs", {"seriesId": series_id})  # 1화 REVIEW (승인 전)
 
         self.assertEqual(blocked.status_code, 409)
-        self.assertEqual(blocked.json()["error"]["code"], "previous_episode_not_approved")
+        self.assertEqual(blocked.json()["error"]["code"], "previous_episode_not_ready")
         self.assertEqual(allowed.status_code, 201)
         self.assertEqual(allowed.json()["episodeNumber"], 2)
         self.assertEqual(allowed.json()["topic"], "머신러닝은 뭐가 달라")
@@ -142,7 +143,7 @@ class SeriesTest(AppTestCase):
         second = self.post("/jobs", {}).json()
 
         self.assertEqual(first["seriesId"], series_id)
-        self.assertEqual(second["topic"], "단독 주제")  # 1화가 아직 승인 전이라 시리즈는 건너뛴다
+        self.assertEqual(second["topic"], "단독 주제")  # 1화가 아직 다 만들어지지 않아 시리즈는 건너뛴다
 
     def test_episode_numbers_must_be_1_to_n(self):
         body = dict(SERIES, key="bad", episodes=[{"number": 2, "title": "x", "outline": "y"}])

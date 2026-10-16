@@ -1,4 +1,4 @@
-"""작업 만들기 (기획서 F1·F2, 아키텍처 D15·D24·D25).
+"""작업 만들기 (기획서 F1·F2, 아키텍처 D15·D24·D25·D27).
 
 주제 출처: 직접 준 주제, 시리즈 다음 화, 자동 선정(시리즈 → 승인된 단독 주제).
 """
@@ -17,6 +17,7 @@ from app.db.models import Episode, Job, JobEvent, Series, Topic
 from .text import normalize_topic
 
 INACTIVE = ("FAILED", "REJECTED")  # 중복 검사에서 빼는 상태
+PRODUCED = ("REVIEW", "APPROVED", "SCHEDULED", "PUBLISHED")  # 다 만들어진 작업 (다음 화를 미리 만들어도 되는 앞 화)
 
 
 def ensure_category(settings, key: str) -> None:
@@ -66,10 +67,12 @@ def _next_episode(s: Session, series: Series) -> Episode:
     if ep is None:
         raise ApiError(409, "series_no_planned_episode", "만들 화가 없다")
     if ep.number > 1:
+        # D27: 앞 화가 승인 전이어도 다 만들어졌으면(REVIEW 이후) 다음 화를 미리 만든다. 승인·공개는 화 순서대로 (review.approve)
         prev = s.scalar(select(Episode).where(Episode.series_id == series.id, Episode.number == ep.number - 1))
-        if prev is None or prev.status != "APPROVED":
-            raise ApiError(409, "previous_episode_not_approved",
-                           f"{ep.number - 1}화가 승인된 뒤에 {ep.number}화를 만든다 (D24)")
+        prev_job = s.get(Job, prev.job_id) if prev is not None and prev.job_id else None
+        if prev is None or (prev.status != "APPROVED" and (prev_job is None or prev_job.status not in PRODUCED)):
+            raise ApiError(409, "previous_episode_not_ready",
+                           f"{ep.number - 1}화가 다 만들어진(REVIEW) 뒤에 {ep.number}화를 만든다 (D27)")
     return ep
 
 

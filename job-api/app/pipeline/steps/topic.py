@@ -19,7 +19,7 @@ class TopicStep:
         series = None
         if job["seriesId"]:
             with ctx.db() as s:
-                series = story_for(s, job["seriesId"], job["episodeNumber"])
+                series = story_for(s, job["seriesId"], job["episodeNumber"], settings=ctx.settings)
         ctx.write_json("job.json", {
             "jobId": job["id"],
             "topic": job["topic"],

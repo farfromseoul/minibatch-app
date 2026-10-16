@@ -20,7 +20,7 @@ from app.domain.jobs import create_job
 from app.publish import approve as publishing
 from app.youtube.client import YouTubeError
 
-from .views import job_detail, job_summary, series_detail, topic_view
+from .views import job_detail, job_summary, series_detail, series_summary, topic_view
 
 public = APIRouter()
 api = APIRouter(dependencies=[Depends(require_token)])
@@ -67,9 +67,9 @@ class EpisodePlan(BaseModel):
 
 
 class SeriesBody(BaseModel):
-    key: Optional[str] = None
+    key: Optional[str] = None  # 계획 생성(episodeCount)이면 없어도 된다: s<날짜>-<순번>
     category: str = "ai-it"
-    title: str = Field(min_length=1, max_length=200)
+    title: Optional[str] = Field(default=None, min_length=1, max_length=200)  # 계획 생성이면 없어도 된다: LLM 이 정함
     bible: dict[str, Any] = Field(default_factory=dict)
     episodes: Optional[list[EpisodePlan]] = None
     episodeCount: Optional[int] = Field(default=None, ge=1, le=50)
@@ -298,17 +298,18 @@ def reject(job_id: str, body: RejectBody, request: Request) -> dict[str, Any]:
 @api.post("/series", status_code=201)
 def post_series(body: SeriesBody, request: Request) -> dict[str, Any]:
     st = _st(request)
-    if not body.key:
-        raise ApiError(422, "invalid_request", "시리즈 key 가 필요하다")
-    if body.episodes is None:  # 제목·화 수만 → LLM 이 계획을 짜서 PROPOSED (D25)
+    if body.episodes is None:  # 화 수만(제목·key 는 있어도 없어도) → LLM 이 계획을 짜서 PROPOSED (D25, D27)
         if not body.episodeCount:
             raise ApiError(422, "invalid_request", "episodes 나 episodeCount 중 하나가 필요하다")
         llm = _llm(request, "series_plan")
         with st.runner.exclusive("시리즈 계획 생성"), st.db() as s:
-            series = generation.generate_series_plan(s, st.settings, st.clock(), llm, key=body.key, category=body.category,
+            key = body.key or generation.next_series_key(s, st.clock())
+            series = generation.generate_series_plan(s, st.settings, st.clock(), llm, key=key, category=body.category,
                                                      title=body.title, count=body.episodeCount, bible=body.bible or None)
             s.commit()
             return series_detail(s, series)
+    if not body.key or not body.title:
+        raise ApiError(422, "invalid_request", "화별 계획을 직접 줄 때는 key 와 title 이 필요하다")
     with st.db() as s:
         series = series_domain.create_user_series(
             s, st.settings, st.clock(), key=body.key, category=body.category, title=body.title,
@@ -322,6 +323,16 @@ def _get_series(s, series_id: str) -> Series:
     if series is None:
         raise ApiError(404, "series_not_found", f"시리즈가 없다: {series_id}")
     return series
+
+
+@api.get("/series")
+def list_series(request: Request, status: Optional[str] = Query(default=None)) -> dict[str, Any]:
+    """시리즈와 화 상태별 개수. n8n 이 남은 화가 부족한지 보고 다음 계획을 만든다 (D27)"""
+    with _st(request).db() as s:
+        q = select(Series).order_by(Series.created_at, Series.id)
+        if status:
+            q = q.where(Series.status == status)
+        return {"items": [series_summary(s, x) for x in s.scalars(q)]}
 
 
 @api.get("/series/{series_id}")

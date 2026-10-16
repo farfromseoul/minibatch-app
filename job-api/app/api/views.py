@@ -47,6 +47,16 @@ def series_detail(s: Session, series: Series) -> dict[str, Any]:
                           "nextTeaser": e.next_teaser, "status": e.status, "jobId": e.job_id} for e in eps]}
 
 
+def series_summary(s: Session, series: Series) -> dict[str, Any]:
+    statuses = list(s.scalars(select(Episode.status).where(Episode.series_id == series.id)))
+    return {"id": series.id, "category": series.category, "title": series.title, "status": series.status,
+            "planSource": series.plan_source, "playlistId": series.youtube_playlist_id,
+            "createdAt": iso(series.created_at), "approvedAt": iso(series.approved_at),
+            "counts": {"total": len(statuses), "planned": statuses.count("PLANNED"),
+                       "inProduction": statuses.count("IN_PRODUCTION"), "approved": statuses.count("APPROVED"),
+                       "rejected": statuses.count("REJECTED")}}
+
+
 def topic_view(t: Topic) -> dict[str, Any]:
     return {"id": t.id, "title": t.title, "category": t.category, "source": t.source, "status": t.status,
             "createdAt": iso(t.created_at)}

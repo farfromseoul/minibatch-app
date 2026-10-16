@@ -212,7 +212,7 @@ class Runner:
                 run.kind = "degraded"
                 run.error = "; ".join(ctx.degraded_notes)
             job = s.get(Job, ctx.job_id)
-            if step.name == self.pipeline[-1]:
+            if step.name == self.pipeline[-1] and job.status == "RUNNING":  # 도는 사이 반려(D27 뒤 화 정리)됐으면 그대로
                 set_status(s, job, "REVIEW", now)
             s.commit()
         return {"jobId": ctx.job_id, "step": ctx.step, "attempt": ctx.attempt, "status": "succeeded",
@@ -226,7 +226,9 @@ class Runner:
             run.status, run.kind, run.error = "failed", kind, message[:2000]
             run.retry_from, run.retry_at, run.finished_at = retry_from, retry_at, now
             job = s.get(Job, ctx.job_id)
-            if kind == "deterministic":
+            if job.status == "REJECTED":
+                pass  # 도는 사이 반려됐다. 상태는 그대로 두고 시도 기록만 남긴다
+            elif kind == "deterministic":
                 set_status(s, job, "FAILED", now, reason=message[:500])
             elif kind == "quota":
                 set_status(s, job, "WAITING", now, reason=f"다시 할 시각 {retry_at}")

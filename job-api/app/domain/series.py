@@ -1,9 +1,10 @@
 """시리즈 (아키텍처 D24·D25)."""
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -45,11 +46,22 @@ def resume(s: Session, series: Series) -> None:
     series.status = "ACTIVE"
 
 
-def story_for(s: Session, series_id: str, number: int, keep: int = 3) -> dict[str, Any]:
+def _summary(settings, ep: Episode) -> Optional[str]:
+    """승인 때 DB 에 남긴 요약. 승인 전에 미리 만드는 화(D27)면 앞 화 대본(script.json)의 요약을 쓴다"""
+    if ep.summary or settings is None or not ep.job_id:
+        return ep.summary
+    path = settings.jobs_dir / ep.job_id / "script.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("episodeSummary")
+    except (OSError, ValueError):
+        return None
+
+
+def story_for(s: Session, series_id: str, number: int, keep: int = 3, settings=None) -> dict[str, Any]:
     """N화 대본의 입력: 시리즈 설정, 앞 화 요약(최근 keep 화), 이번 화·다음 화 계획."""
     series = s.get(Series, series_id)
     eps = {e.number: e for e in s.scalars(select(Episode).where(Episode.series_id == series_id))}
-    previous = [{"episode": n, "title": eps[n].title, "summary": eps[n].summary}
+    previous = [{"episode": n, "title": eps[n].title, "summary": _summary(settings, eps[n])}
                 for n in range(max(1, number - keep), number) if n in eps]
     nxt = eps.get(number + 1)
     return {

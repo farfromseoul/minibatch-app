@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
+from app.core.timeutil import kst_date
 from app.db.models import Episode, Job, Series, Topic
 from app.llm.base import LlmEngine, LlmError
 from app.llm.converse import converse
@@ -64,15 +65,28 @@ def generate_topics(s: Session, settings, now: datetime, llm: LlmEngine, categor
     return created
 
 
-def generate_series_plan(s: Session, settings, now: datetime, llm: LlmEngine, *, key: str, category: str, title: str,
-                         count: int, bible: Optional[dict[str, Any]]) -> Series:
+def next_series_key(s: Session, now: datetime) -> str:
+    """제목·key 없이 자동으로 만드는 시리즈의 key: s<한국 날짜>-<그날 순번> (D27)"""
+    prefix = f"s{kst_date(now)}-"
+    ids = s.scalars(select(Series.id).where(Series.id.like(prefix + "%"))).all()
+    n = max((int(i.rsplit("-", 1)[1]) for i in ids if i.rsplit("-", 1)[1].isdigit()), default=0) + 1
+    return f"{prefix}{n}"
+
+
+def generate_series_plan(s: Session, settings, now: datetime, llm: LlmEngine, *, key: str, category: str,
+                         title: Optional[str], count: int, bible: Optional[dict[str, Any]]) -> Series:
+    """title 이 없으면 LLM 이 제목도 정한다(D27 자동 운영). 예전 시리즈 제목을 주어 겹치지 않게 한다"""
     cat = _category(settings, category)
     if not KEY.match(key):
         raise ApiError(422, "invalid_request", "key 는 영문 소문자·숫자·- 64자 이내")
     if s.get(Series, key) is not None:
         raise ApiError(409, "series_exists", f"같은 key 의 시리즈가 있다: {key}")
-    prompt, _ = render("series_plan", title=title, count=count, category_title=cat.get("title", category),
+    recent = list(s.scalars(select(Series.title).order_by(Series.created_at.desc()).limit(30)))
+    prompt, _ = render("series_plan", count=count, category_title=cat.get("title", category),
                        audience=cat.get("audience", ""),
+                       title_line=f"'{title}'이라는" if title else "새",
+                       title_rule="" if title else "- title: 시리즈 제목 한 줄. 아래 예전 시리즈와 주제·인물이 겹치지 않게\n",
+                       recent="" if title or not recent else "예전 시리즈 제목:\n" + "\n".join(f"- {t}" for t in recent) + "\n",
                        given_bible=f"사용자가 정한 설정(그대로 쓴다): {json.dumps(bible, ensure_ascii=False)}" if bible else "")
     st = {"type": "string"}
     schema = {"type": "object", "properties": {
@@ -85,6 +99,9 @@ def generate_series_plan(s: Session, settings, now: datetime, llm: LlmEngine, *,
                                                 "required": ["title", "outline"], "additionalProperties": False},
                      "minItems": count, "maxItems": count}},
         "required": ["bible", "episodes"], "additionalProperties": False}
+    if not title:
+        schema["properties"] = {"title": st, **schema["properties"]}
+        schema["required"] = ["title", "bible", "episodes"]
 
     def check(d: Any) -> list[str]:
         if not isinstance(d, dict) or not isinstance(d.get("episodes"), list) or not isinstance(d.get("bible"), dict):
@@ -93,10 +110,12 @@ def generate_series_plan(s: Session, settings, now: datetime, llm: LlmEngine, *,
             return [f"episodes 는 정확히 {count}개여야 한다 (지금 {len(d['episodes'])}개)"]
         if any(not e.get("title") or not e.get("outline") for e in d["episodes"]):
             return ["화마다 title 과 outline 이 필요하다"]
+        if not title and not str(d.get("title") or "").strip():
+            return ["시리즈 title 이 필요하다"]
         return []
 
     data = _ask(llm, prompt, schema, "series_plan", check)
-    series = Series(id=key, category=category, title=title, bible=bible or data["bible"], plan_source="llm",
+    series = Series(id=key, category=category, title=(title or str(data["title"]).strip())[:200], bible=bible or data["bible"], plan_source="llm",
                     status="PROPOSED", created_at=now, approved_at=None)
     s.add(series)
     s.flush()  # 화보다 시리즈를 먼저 넣는다 (부록 B: 저장 순서)
