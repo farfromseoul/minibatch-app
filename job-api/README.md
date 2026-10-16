@@ -53,7 +53,9 @@ tests/                  # 단위 테스트 (unittest)
 | POST | `/jobs/{id}/approve` `{approvedBy, publishAt?}`, `/reject` `{rejectedBy, reason}` | REVIEW 에서만. 시리즈 화면 화·시리즈 상태도 바꾼다 |
 | POST·GET | `/series`, `/series/{id}`, `/series/{id}/resume` | 사용자 작성 시리즈 등록(바로 APPROVED), 조회, 멈춘 시리즈 다시 진행 |
 | POST·GET | `/topics`, `/topics?status=`, `/topics/{id}/approve`, `/reject` | 사용자 주제 추가(READY), 조회, 자동 생성 주제 승인·반려 |
-| POST | `/topics/generate`, `/series`(계획 없이) | 501. LLM 자동 생성은 작업 순서 20-d |
+| POST | `/topics/generate` `{category, count}` | LLM 이 주제 후보를 만들어 PROPOSED 로 저장 (기존·중복 제외). 단계와 같은 전역 잠금(409 busy), LLM 없음 503 |
+| POST | `/series` `{key, title, episodeCount}` (계획 없이) | LLM 이 설정(bible)·화별 계획을 만들어 PROPOSED |
+| POST | `/series/{id}/approve` `{approvedBy, episodes?, bible?}` | 승인 대기 시리즈 승인 (고친 계획 반영) |
 
 ## LLM 단계 (script · review · scenes)
 

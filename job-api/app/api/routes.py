@@ -13,7 +13,7 @@ from sqlalchemy import select, text
 from app.core.auth import require_token
 from app.core.errors import ApiError
 from app.db.models import Job, Series, Topic
-from app.domain import review, series as series_domain, topics as topic_domain
+from app.domain import generation, review, series as series_domain, topics as topic_domain
 from app.domain.jobs import create_job
 
 from .views import job_detail, job_summary, series_detail, topic_view
@@ -24,6 +24,13 @@ api = APIRouter(dependencies=[Depends(require_token)])
 
 def _st(request: Request):
     return request.app.state
+
+
+def _llm(request: Request, step: str):
+    providers = _st(request).providers
+    if providers is None:
+        raise ApiError(503, "llm_unavailable", "LLM 제공자 설정(providers.yaml)이 없다")
+    return providers.llm(step)
 
 
 # ---------- 요청 본문
@@ -62,6 +69,19 @@ class SeriesBody(BaseModel):
     bible: dict[str, Any] = Field(default_factory=dict)
     episodes: Optional[list[EpisodePlan]] = None
     episodeCount: Optional[int] = Field(default=None, ge=1, le=50)
+
+    @field_validator("episodes")
+    @classmethod
+    def numbered_from_one(cls, v):
+        if v is not None and [e.number for e in v] != list(range(1, len(v) + 1)):
+            raise ValueError("화 번호는 1부터 빠짐없이 차례대로")
+        return v
+
+
+class ApproveSeriesBody(BaseModel):
+    approvedBy: str = Field(min_length=1, max_length=100)
+    episodes: Optional[list[EpisodePlan]] = None
+    bible: Optional[dict[str, Any]] = None
 
     @field_validator("episodes")
     @classmethod
@@ -200,10 +220,17 @@ def reject(job_id: str, body: RejectBody, request: Request) -> dict[str, Any]:
 @api.post("/series", status_code=201)
 def post_series(body: SeriesBody, request: Request) -> dict[str, Any]:
     st = _st(request)
-    if body.episodes is None:
-        raise ApiError(501, "not_implemented", "화별 계획 자동 생성은 작업 순서 20-d 에서 구현한다")
     if not body.key:
-        raise ApiError(422, "invalid_request", "사용자가 쓴 시리즈는 key 가 필요하다")
+        raise ApiError(422, "invalid_request", "시리즈 key 가 필요하다")
+    if body.episodes is None:  # 제목·화 수만 → LLM 이 계획을 짜서 PROPOSED (D25)
+        if not body.episodeCount:
+            raise ApiError(422, "invalid_request", "episodes 나 episodeCount 중 하나가 필요하다")
+        llm = _llm(request, "series_plan")
+        with st.runner.exclusive("시리즈 계획 생성"), st.db() as s:
+            series = generation.generate_series_plan(s, st.settings, st.clock(), llm, key=body.key, category=body.category,
+                                                     title=body.title, count=body.episodeCount, bible=body.bible or None)
+            s.commit()
+            return series_detail(s, series)
     with st.db() as s:
         series = series_domain.create_user_series(
             s, st.settings, st.clock(), key=body.key, category=body.category, title=body.title,
@@ -223,6 +250,18 @@ def _get_series(s, series_id: str) -> Series:
 def get_series(series_id: str, request: Request) -> dict[str, Any]:
     with _st(request).db() as s:
         return series_detail(s, _get_series(s, series_id))
+
+
+@api.post("/series/{series_id}/approve")
+def approve_series(series_id: str, body: ApproveSeriesBody, request: Request) -> dict[str, Any]:
+    st = _st(request)
+    with st.db() as s:
+        series = _get_series(s, series_id)
+        generation.approve_series_plan(s, series, st.clock(),
+                                       [e.model_dump() for e in body.episodes] if body.episodes is not None else None,
+                                       body.bible)
+        s.commit()
+        return series_detail(s, series)
 
 
 @api.post("/series/{series_id}/resume")
@@ -246,9 +285,14 @@ def post_topics(body: TopicsBody, request: Request) -> dict[str, Any]:
         return {"created": created}
 
 
-@api.post("/topics/generate")
-def generate_topics(body: GenerateBody) -> dict[str, Any]:
-    raise ApiError(501, "not_implemented", "주제 자동 생성은 작업 순서 20-d 에서 구현한다")
+@api.post("/topics/generate", status_code=201)
+def generate_topics(body: GenerateBody, request: Request) -> dict[str, Any]:
+    st = _st(request)
+    llm = _llm(request, "topics")
+    with st.runner.exclusive("주제 후보 생성"), st.db() as s:
+        created = generation.generate_topics(s, st.settings, st.clock(), llm, body.category, body.count)
+        s.commit()
+        return {"created": len(created), "items": [topic_view(t) for t in created]}
 
 
 @api.get("/topics")

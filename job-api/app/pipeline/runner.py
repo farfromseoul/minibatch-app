@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 import shutil
 import threading
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Callable, Optional
 
@@ -61,6 +62,20 @@ class Runner:
             return {"step": step, "status": run.status, "attempt": run.attempt, "kind": run.kind,
                     "retryFrom": run.retry_from, "retryAt": run.retry_at, "error": run.error,
                     "startedAt": iso(run.started_at), "finishedAt": iso(run.finished_at)}
+
+    @contextmanager
+    def exclusive(self, what: str):
+        """단계가 아닌 무거운 일(LLM 주제·계획 생성)도 같은 전역 잠금 아래에서 한다 (메모리 예산, D4)"""
+        if not self._lock.acquire(blocking=False):
+            raise ApiError(409, "busy", f"다른 작업이 실행 중이다: {self._running_job}")
+        self._running_job = what
+        self._idle.clear()
+        try:
+            yield
+        finally:
+            self._running_job = None
+            self._lock.release()
+            self._idle.set()
 
     def wait_idle(self, timeout: float) -> bool:
         return self._idle.wait(timeout)

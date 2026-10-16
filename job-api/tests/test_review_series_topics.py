@@ -73,10 +73,10 @@ class SeriesTest(AppTestCase):
         self.assertEqual(s["planSource"], "user")
         self.assertEqual([e["status"] for e in s["episodes"]], ["PLANNED"] * 3)
 
-    def test_plan_generation_is_not_implemented_yet(self):
-        res = self.post("/series", {"category": "ai-it", "title": "제목만", "episodeCount": 5})
+    def test_plan_generation_without_llm_settings_is_503(self):
+        res = self.post("/series", {"key": "x", "category": "ai-it", "title": "제목만", "episodeCount": 5})
 
-        self.assertEqual(res.status_code, 501)
+        self.assertEqual(res.status_code, 503)  # 이 테스트는 providers.yaml 없이 돈다 (생성은 tests/test_generation.py)
 
     def test_next_episode_waits_for_previous_approval(self):
         series_id = self.create_series()
@@ -157,9 +157,6 @@ class TopicsTest(AppTestCase):
         self.assertEqual(res.status_code, 201)
         self.assertEqual(res.json()["created"], 1)  # 같은 주제는 한 번만
         self.assertEqual([t["status"] for t in self.get("/topics?status=READY").json()["items"]], ["READY"])
-
-    def test_generation_is_not_implemented_yet(self):
-        self.assertEqual(self.post("/topics/generate", {"category": "ai-it", "count": 5}).status_code, 501)
 
     def test_proposed_topic_needs_approval(self):
         from app.db.models import Topic

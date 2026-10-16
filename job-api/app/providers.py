@@ -15,7 +15,7 @@ from app.llm.openai_compatible import OpenAiCompatible
 
 LLM_KINDS = {"openai-compatible", "claude-api"}
 TTS_KINDS = {"http-worker"}
-CLIP_ENGINES = {"none", "runway", "higgsfield"}
+CLIP_ENGINES = {"none", "runway", "higgsfield", "seedance"}  # 생성기 구현은 Phase 2 (기획서 F16~F18)
 
 
 class ProviderError(Exception):
@@ -28,9 +28,11 @@ class ProviderRegistry:
         self._llms = llms
 
     def llm(self, step: str) -> LlmEngine:
-        name = self.config["llm"]["steps"].get(step)
+        steps = self.config["llm"]["steps"]
+        # 따로 정하지 않은 LLM 일(주제·시리즈 계획 생성 등)은 script 단계의 제공자를 쓴다
+        name = steps.get(step) or steps.get("script")
         if name is None:
-            raise ProviderError(f"llm.steps 에 {step} 이 없다")
+            raise ProviderError(f"llm.steps 에 {step} 도 script 도 없다")
         return self._llms[name]
 
     def tts_settings(self) -> dict[str, Any]:
