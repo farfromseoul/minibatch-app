@@ -247,6 +247,9 @@ class UploadTest(PublishCase):
         self.assertEqual(st["kind"], "quota")
         self.assertTrue(st["retryAt"].endswith("Z"))
         self.assertEqual(self.get(f"/jobs/{job_id}").json()["status"], "WAITING")
+        # n8n 생산 워크플로는 작업 상세 하나로 다음 행동을 정한다 (다시 할 시각 포함)
+        last = self.get(f"/jobs/{job_id}").json()["steps"][-1]
+        self.assertEqual((last["step"], last["retryAt"]), ("upload", st["retryAt"]))
 
     def test_expired_token_is_deterministic(self):
         self.yt.fail["upload_video"] = YouTubeError("deterministic", "갱신 토큰을 쓸 수 없다(invalid_grant) 15번")

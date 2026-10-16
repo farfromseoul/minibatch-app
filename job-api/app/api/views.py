@@ -26,7 +26,7 @@ def job_detail(s: Session, job: Job) -> dict[str, Any]:
     return {
         **job_summary(job),
         "steps": [{"step": r.step, "attempt": r.attempt, "status": r.status, "kind": r.kind,
-                   "retryFrom": r.retry_from, "error": r.error} for r in runs],
+                   "retryFrom": r.retry_from, "retryAt": r.retry_at, "error": r.error} for r in runs],
         "artifacts": [{"step": a.step, "kind": a.kind, "path": a.path, "sha256": a.sha256} for a in arts],
         "events": [{"from": e.from_status, "to": e.to_status, "actor": e.actor, "reason": e.reason,
                     "at": iso(e.at)} for e in events],
