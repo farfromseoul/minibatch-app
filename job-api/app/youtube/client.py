@@ -124,7 +124,7 @@ class YouTube:
         except ValueError:
             pass
         detail = f"{what} {res.status_code} {reason or ''} {message}".strip()
-        if res.status_code == 403 and reason in QUOTA_REASONS:
+        if reason in QUOTA_REASONS:  # 상태 코드는 403·400 둘 다 온다 (채널 업로드 한도는 400, 2026-10-16 실제)
             raise YouTubeError("quota", detail, res.status_code, reason)
         if res.status_code == 429 or res.status_code >= 500:
             raise YouTubeError("transient", detail, res.status_code, reason)

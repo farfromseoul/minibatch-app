@@ -162,6 +162,18 @@ class UploadTest(ClientCase):
 
                 self.assertEqual((cm.exception.kind, cm.exception.reason), ("quota", reason))
 
+    def test_channel_upload_limit_comes_as_400_and_is_quota(self):
+        # 2026-10-16 실제: 채널 하루 업로드 한도는 403 이 아니라 400 uploadLimitExceeded 로 왔다
+        self.google.api_status[("POST", "/upload/youtube/v3/videos")] = (400, {"error": {
+            "code": 400, "message": "The user has exceeded the number of videos they may upload.",
+            "errors": [{"reason": "uploadLimitExceeded"}]}})
+
+        with self.assertRaises(YouTubeError) as cm:
+            self.yt.upload_video(self.video, title="t", description="d", disclosure=DISCLOSURE,
+                                 category_id="28", tags=[], synthetic=False)
+
+        self.assertEqual((cm.exception.kind, cm.exception.reason), ("quota", "uploadLimitExceeded"))
+
     def test_server_error_is_transient_and_bad_request_is_deterministic(self):
         for status, kind in ((503, "transient"), (400, "deterministic")):
             with self.subTest(status=status):
