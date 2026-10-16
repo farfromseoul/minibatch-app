@@ -18,6 +18,8 @@ class Settings:
     # n8n Wait 노드 재개 주소만 부른다. 요청에 아무 주소나 넣어 job-api 가 외부로 요청을 보내게 하지 못하게
     resume_url_prefix: str = "http://n8n:5678/"
     duplicate_window_days: int = 30  # 기획서 성공 기준 9
+    # 제공자 설정 파일. None 이면 읽지 않는다(LLM 단계는 실패). 실제 서버는 환경 변수로 늘 지정한다
+    providers_file: Path | None = None
     extra: dict = field(default_factory=dict)
 
     @classmethod
@@ -33,6 +35,7 @@ class Settings:
             review_backlog_limit=int(env.get("MINIBATCH_REVIEW_BACKLOG_LIMIT", "6")),
             disk_free_warn_gb=int(env.get("MINIBATCH_DISK_FREE_WARN_GB", "50")),
             resume_url_prefix=env.get("MINIBATCH_RESUME_URL_PREFIX", "http://n8n:5678/"),
+            providers_file=Path(env.get("MINIBATCH_PROVIDERS_FILE", "/etc/minibatch/providers.yaml")),
         )
 
     @property

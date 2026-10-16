@@ -34,7 +34,9 @@ class StepContext:
     job: dict[str, Any]  # DB 의 작업 정보 (topic, category, series 등)
     settings: Any
     db: Callable  # 세션을 여는 함수 (topic 단계처럼 DB 가 필요한 단계만 쓴다)
+    providers: Any = None  # ProviderRegistry (LLM·TTS 단계가 쓴다)
     written: list[Path] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)  # 토큰 등 시도 기록
     degraded_notes: list[str] = field(default_factory=list)
 
     def path(self, rel: str) -> Path:

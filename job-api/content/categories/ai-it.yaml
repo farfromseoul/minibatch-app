@@ -11,7 +11,13 @@ script:
   max_sentence_chars: 40
 review:
   rules: [기술 사실 오류, 과장, 모호한 표현]
-templates: []            # scenes 단계가 고를 템플릿 목록. render 템플릿이 생기면 채운다 (작업 순서 20-c)
+  banned_words: ["100%", "완벽하게", "무조건", "절대로", "최고의"]   # 규칙 검사에서 경고
+templates:               # scenes 단계가 고를 수 있는 템플릿 (render/src/scenes, app/schemas/templates.py)
+  - TitleReveal
+  - FlowDiagram
+  - ComparisonCards
+  - NeuralNetwork
+  - SummaryScene
 youtube:
   category_id: "28"      # 과학기술 (미확인: videoCategories.list 로 확인)
   disclosure: AI 도구로 대본과 음성을 만들었습니다

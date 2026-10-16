@@ -29,8 +29,9 @@ TRANSIENT_LIMIT = 3  # 같은 단계의 일시적 실패가 이만큼 쌓이면 
 class Runner:
     def __init__(self, *, settings, db: Callable[[], Session], pipeline: list[str], steps: dict[str, Step],
                  executor: Callable[[Callable[[], None]], None], notify: Callable[[str, dict], None],
-                 clock: Callable[[], datetime]):
+                 clock: Callable[[], datetime], providers: Any = None):
         self.settings = settings
+        self.providers = providers
         self.db = db
         self.pipeline = pipeline
         self.steps = steps
@@ -121,7 +122,7 @@ class Runner:
         self._running_job = job_id
         self._idle.clear()
         ctx = StepContext(job_id=job_id, step=step_name, attempt=attempt, job_dir=job_dir, job=ctx_job,
-                          settings=self.settings, db=self.db)
+                          settings=self.settings, db=self.db, providers=self.providers)
         self.executor(lambda: self._execute(step, ctx, resume_url))  # 규칙 4: 비동기
         return 202, {"status": "started", "step": step_name, "attempt": attempt}
 

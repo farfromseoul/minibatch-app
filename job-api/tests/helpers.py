@@ -68,6 +68,9 @@ class AppTestCase(unittest.TestCase):
             "review": FakeStep("review", ["script.json"], ["review.json"]),
         }
 
+    def make_providers(self):
+        return None  # LLM 단계 테스트는 가짜 레지스트리를 넣는다
+
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         root = pathlib.Path(self._tmp.name)
@@ -93,6 +96,7 @@ class AppTestCase(unittest.TestCase):
             executor=inline_executor,
             notify=lambda url, payload: self.resumed.append((url, payload)),
             clock=self.clock,
+            providers=self.make_providers(),
         )
         self.client = TestClient(self.app)
         self.client.__enter__()  # lifespan(DB 이전, 재시작 복구) 실행

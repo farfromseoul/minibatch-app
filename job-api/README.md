@@ -14,7 +14,10 @@ app/
     pipeline.py         # 단계 순서 PIPELINE
     runner.py           # 단계 실행 규칙 1~8
     files.py            # 해시 (멱등 판정)
-    steps/              # 단계 구현. 지금은 topic 만 (나머지는 작업 순서 20-d)
+    steps/              # 단계 구현: topic, script, review, scenes (나머지는 20-d2·d3)
+  llm/                  # LLM 연결부, 재요청, 프롬프트 파일
+  providers.py          # providers.yaml 읽기·검사
+  schemas/templates.py  # 템플릿 속성 규격
   api/                  # HTTP 경로와 응답 모양
 content/categories/     # 카테고리 설정 묶음 (D23). 지금은 ai-it 하나
 tests/                  # 단위 테스트 (unittest)
@@ -52,6 +55,19 @@ tests/                  # 단위 테스트 (unittest)
 | POST·GET | `/topics`, `/topics?status=`, `/topics/{id}/approve`, `/reject` | 사용자 주제 추가(READY), 조회, 자동 생성 주제 승인·반려 |
 | POST | `/topics/generate`, `/series`(계획 없이) | 501. LLM 자동 생성은 작업 순서 20-d |
 
+## LLM 단계 (script · review · scenes)
+
+| 단계 | 하는 일 | 실패 |
+| --- | --- | --- |
+| script | 카테고리 파일(대상·구조·금지)과 시리즈의 지난 이야기로 대본. 목표 글자 수 = 60초 × `chars_per_sec` × 0.9. 문장을 넉넉히 받고 길면 코드가 끝 설명 문장부터 뺀다 | 문장 40자 초과·시리즈 필드 누락이 3번 남으면 deterministic(`retry_from=script`). 글자 수만 모자라면 degraded |
+| review | 규칙 검사(금칙어·숫자 경고, 문장 길이) + LLM 자기 검토 | critical → deterministic(`retry_from=script`) |
+| scenes | 문장 **번호**를 장면에 나누고 템플릿·속성 선택. 문장은 코드가 채운다 | 번호 누락·순서, 장면당 1~4문장, 첫 hook·끝 summary, 템플릿 3연속, 속성 규격 → 3번 남으면 deterministic(`retry_from=scenes`) |
+
+- LLM 연결부: `app/llm/openai_compatible.py` (LM Studio). 답이 `content`가 아니라 `reasoning_content`에 와도 회수한다. 서버 오류·시간 초과는 transient.
+- 프롬프트: `app/llm/prompts/*.md`. 해시가 산출물 `meta.promptVersion`.
+- 템플릿 속성 규격: `app/schemas/templates.py` (render 의 `src/lib/timeline.ts`와 같은 규칙. 바꿀 때 함께).
+- 제공자: `providers.yaml`(`MINIBATCH_PROVIDERS_FILE`). 시작할 때 검사하고 틀리면 시작하지 않는다. TTS 에 `chars_per_sec` 필요.
+
 ## 설정 (환경 변수)
 
 | 이름 | 기본값 |
@@ -63,6 +79,7 @@ tests/                  # 단위 테스트 (unittest)
 | `MINIBATCH_DAILY_JOB_LIMIT` / `MINIBATCH_REVIEW_BACKLOG_LIMIT` | 3 / 6 (자동 선정에만 적용) |
 | `MINIBATCH_DISK_FREE_WARN_GB` | 50 |
 | `MINIBATCH_RESUME_URL_PREFIX` | `http://n8n:5678/` (재개 주소는 이 주소로 시작해야 함) |
+| `MINIBATCH_PROVIDERS_FILE` | `/etc/minibatch/providers.yaml` (없거나 틀리면 시작하지 않음) |
 
 uvicorn 작업자(worker)는 하나로 띄운다. 전역 잠금이 프로세스 안의 잠금이다.
 
