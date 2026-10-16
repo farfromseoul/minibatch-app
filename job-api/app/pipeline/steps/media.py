@@ -4,12 +4,15 @@
 """
 from __future__ import annotations
 
+import os
 import shutil
-from typing import Any
+import subprocess
+from typing import Any, Callable, Optional
 
 import httpx
 
 from app.core.category import load_category
+from app.media.ffmpeg import normalize_loudness
 from app.pipeline.timeline_calc import compute_timeline
 from app.text.pronunciation import apply_pronunciation, load_dictionary
 
@@ -103,10 +106,24 @@ class VisualsStep:
                                         "costUsd": 0})
 
 
+LOUDNESS_TARGET_LUFS = -14.0  # YouTube 가 큰 소리를 줄이는 기준으로 알려진 값 (공식 수치 미확인, 앱 설계 "품질 게이트")
+TRUE_PEAK_DB = -1.5
+
+
 class RenderStep:
+    """render-worker 로 렌더한 뒤 job-api 에서 음량을 맞춘다 (작업 순서 20-d4).
+
+    음량을 여기서 맞추는 이유: job-api 이미지에 ffmpeg 가 이미 있고, TTS 엔진을 바꾸거나 배경음악을 넣어도
+    완성 영상 전체 기준으로 맞출 수 있다. 버린 대안: tts-worker 문장별 정규화(영상 전체 음량이 안 맞음),
+    render-worker(Remotion 의 ffmpeg 호출 경로 확인과 이미지 재빌드 필요).
+    """
+
     name = "render"
     inputs = ["timeline.json", "visuals.json", "tts"]
     outputs = ["render/final.mp4"]
+
+    def __init__(self, normalize: Optional[Callable[..., dict[str, Any]]] = None):
+        self._normalize = normalize or normalize_loudness
 
     def run(self, ctx: StepContext) -> None:
         out = ctx.job_dir / "render" / "final.mp4"
@@ -114,3 +131,14 @@ class RenderStep:
                                     {"timeline": str(ctx.job_dir / "timeline.json"), "out": str(out)},
                                     float(ctx.settings.render_timeout_sec), "render-worker", retry_from_on_422="scenes")
         ctx.meta["render"] = res  # 렌더 시간·프레임 수는 step_run 기록용
+        tmp = out.with_name(f"final.loudnorm-{ctx.attempt}.mp4")
+        try:
+            ctx.meta["loudnorm"] = self._normalize(out, tmp, target_i=LOUDNESS_TARGET_LUFS, true_peak=TRUE_PEAK_DB)
+            os.replace(tmp, out)  # 다 쓴 뒤에 바꾼다 (규칙 5)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, OSError) as e:
+            detail = getattr(e, "stderr", "") or str(e)
+            raise StepFailure("deterministic", f"음량 맞추기 실패: {type(e).__name__} {str(detail)[-300:]}",
+                              retry_from="render") from e
+        finally:
+            if tmp.exists():
+                tmp.unlink()

@@ -17,9 +17,10 @@ from app.pipeline.files import sha256_path
 from app.youtube.client import YouTube, YouTubeError
 
 from .base import StepContext, StepFailure
+from .media import LOUDNESS_TARGET_LUFS as LUFS_TARGET
 
 SILENCE_FAIL_SEC = 2.5  # 장면 사이 무음은 1.6~1.85초가 정상이었다(2026-10-16 실제 영상 3편). 음성이 빠진 경우를 잡는다
-LUFS_TARGET, LUFS_TOLERANCE = -14.0, 2.0  # 기준값 미확인이라 경고만 (앱 설계 "품질 게이트")
+LUFS_TOLERANCE = 2.0  # render 단계가 LOUDNESS_TARGET_LUFS 로 맞춘다(20-d4). 어긋나면 맞추기가 안 된 것
 RETRY_ORDER = ["script", "scenes", "tts", "render"]  # 여러 검사가 어긋나면 가장 앞 단계부터 다시
 DEFAULT_DISCLOSURE = "AI 도구로 대본과 음성을 만들었습니다"  # 카테고리에 없어도 비울 수 없다 (Supertonic 라이선스)
 
@@ -60,14 +61,14 @@ class QcStep:
         check("captions", caps_ok, len(caps), "영상 안, 겹침 없음", "scenes")
         lufs = a.get("integratedLufs")
         loud_ok = lufs is not None and abs(lufs - LUFS_TARGET) <= LUFS_TOLERANCE
-        check("loudness", loud_ok, lufs, f"{LUFS_TARGET}±{LUFS_TOLERANCE} LUFS (경고만)")
-        warnings = [] if loud_ok else [f"음량 {lufs} LUFS 가 기준 {LUFS_TARGET}±{LUFS_TOLERANCE} 밖이다 (경고만)"]
+        check("loudness", loud_ok, lufs, f"{LUFS_TARGET}±{LUFS_TOLERANCE} LUFS", "render")
+        warnings: list[str] = []  # 실패는 아니지만 알릴 것 (지금은 없다)
 
         failed = [c for c in checks if not c["ok"] and c["retryFrom"]]
         if failed:
             retry = min((c["retryFrom"] for c in failed), key=RETRY_ORDER.index)
             names = {"length": "길이", "resolution": "해상도", "fps": "프레임률", "frames": "프레임 수",
-                     "audio": "오디오", "silence": "무음", "captions": "자막"}
+                     "audio": "오디오", "silence": "무음", "captions": "자막", "loudness": "음량"}
             detail = ", ".join(f"{names[c['name']]} {c['value']} (기준 {c['expected']})" for c in failed)
             raise StepFailure("deterministic", f"품질 검사 실패: {detail}", retry_from=retry)
         for w in warnings:

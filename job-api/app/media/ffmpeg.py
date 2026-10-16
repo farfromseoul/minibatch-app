@@ -1,6 +1,7 @@
 """ffprobe·ffmpeg 로 완성 영상을 잰다 (앱 설계 "품질 게이트"). job-api 이미지에 ffmpeg 가 들어 있다.
 
 음량(ebur128)과 무음(silencedetect)은 오디오를 한 번만 읽도록 필터 하나로 잰다.
+음량 맞추기(loudnorm)는 두 번 읽는다: 한 번 재고, 잰 값을 넣어 한 번 바꾼다(한 번에 하면 덜 정확하다).
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ from typing import Any, Optional
 _SILENCE_START = re.compile(r"silence_start:\s*(-?[\d.]+)")
 _SILENCE_END = re.compile(r"silence_end:\s*(-?[\d.]+)")
 _SUMMARY_I = re.compile(r"Summary:.*?I:\s*(-?[\d.]+|-inf)\s*LUFS", re.S)
+_LOUDNORM_JSON = re.compile(r"\{[^{}]*\"input_i\"[^{}]*\}", re.S)
 
 
 def parse_silences(log: str, end: float) -> list[tuple[float, float]]:
@@ -66,3 +68,33 @@ def analyze(path: Path, silence_db: int = -50, silence_min_sec: float = 1.5, tim
         "integratedLufs": parse_ebur128(log),
         "silences": parse_silences(log, duration),
     }
+
+
+def parse_loudnorm(log: str) -> dict[str, str]:
+    """loudnorm print_format=json 이 stderr 끝에 찍는 JSON"""
+    m = _LOUDNORM_JSON.search(log)
+    if not m:
+        raise ValueError("loudnorm 측정 결과가 없다")
+    return json.loads(m.group(0))
+
+
+def normalize_loudness(src: Path, dst: Path, target_i: float = -14.0, true_peak: float = -1.5, lra: float = 11.0,
+                       timeout: int = 600) -> dict[str, str]:
+    """오디오만 target_i LUFS 로 맞춰 dst 에 쓴다. 영상은 다시 인코딩하지 않고 복사한다.
+
+    작은 소리를 많이 키우면 순간 최대(true peak)가 한도를 넘어 loudnorm 이 dynamic 방식으로 바뀐다.
+    2026-10-16 실제 1화: -25.5 → -14.0 LUFS, 최대 -1.4 dBFS, 영상 프레임 수 그대로.
+    """
+    base = f"loudnorm=I={target_i}:TP={true_peak}:LRA={lra}"
+    first = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(src), "-vn", "-af", f"{base}:print_format=json",
+                            "-f", "null", "-"], check=True, capture_output=True, text=True, timeout=timeout)
+    m = parse_loudnorm(first.stderr)
+    second = (f"{base}:measured_I={m['input_i']}:measured_TP={m['input_tp']}:measured_LRA={m['input_lra']}"
+              f":measured_thresh={m['input_thresh']}:offset={m['target_offset']}:linear=true:print_format=json")
+    run = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-y", "-i", str(src), "-map", "0:v", "-map", "0:a",
+                          "-c:v", "copy", "-af", second, "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+                          "-movflags", "+faststart", "-f", "mp4", str(dst)],
+                         check=True, capture_output=True, text=True, timeout=timeout)
+    out = parse_loudnorm(run.stderr)
+    return {**m, "output_i": out.get("output_i"), "output_tp": out.get("output_tp"),
+            "normalization_type": out.get("normalization_type")}

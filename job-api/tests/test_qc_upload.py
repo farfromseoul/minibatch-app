@@ -145,6 +145,7 @@ class QcTest(PublishCase):
         self.assertEqual({c["name"] for c in qc["checks"]},
                          {"length", "resolution", "fps", "frames", "audio", "silence", "captions", "loudness"})
         self.assertEqual(qc["warnings"], [])
+        self.assertTrue(all(c["ok"] for c in qc["checks"]))
 
     def test_length_out_of_range_goes_back_to_script(self):
         self.analysis = good_analysis(durationSec=66.3)
@@ -182,15 +183,16 @@ class QcTest(PublishCase):
                 st = self.status(job_id, "qc")
                 self.assertEqual((st["kind"], st["retryFrom"]), ("deterministic", "render"), name)
 
-    def test_quiet_audio_is_only_a_warning(self):
-        # 기준값(-14 LUFS)이 아직 미확인이라 실패로 막지 않는다. 실제 영상은 -25 LUFS 였다(2026-10-16)
+    def test_quiet_audio_goes_back_to_render(self):
+        # render 단계가 -14 LUFS 로 맞추므로(20-d4), 어긋나면 음량 맞추기가 안 된 것이다
         self.analysis = good_analysis(integratedLufs=-25.5)
         job_id = self.new_job()
 
         self.run_until(job_id, "qc")
 
-        self.assertEqual(self.status(job_id, "qc")["status"], "succeeded")
-        self.assertIn("-25.5", self.read(job_id, "qc.json")["warnings"][0])
+        st = self.status(job_id, "qc")
+        self.assertEqual((st["kind"], st["retryFrom"]), ("deterministic", "render"))
+        self.assertIn("음량 -25.5", st["error"])
 
     def test_caption_past_end_fails(self):
         self.analysis = good_analysis()

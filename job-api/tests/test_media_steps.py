@@ -10,6 +10,7 @@ import unittest
 import wave
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+from app.pipeline.steps.media import RenderStep
 from app.pipeline.timeline_calc import compute_timeline
 from app.text.pronunciation import apply_pronunciation
 from tests.fakes import FakeLlm, FakeRegistry
@@ -117,7 +118,18 @@ class MediaCase(AppTestCase):
         return FakeRegistry(FakeLlm(), tts_url=self.url)
 
     def make_steps(self):
+        self.normalized = []
+        self.normalize_error = None
+
+        def normalize(src, dst, **kw):  # 가짜 음량 맞추기: 받은 인자를 남기고 파일을 그대로 복사
+            if self.normalize_error:
+                raise self.normalize_error
+            self.normalized.append((pathlib.Path(src), pathlib.Path(dst), kw))
+            shutil.copy(src, dst)
+            return {"input_i": "-25.5", "normalization_type": "dynamic"}
+
         return {
+            "render": RenderStep(normalize=normalize),
             "script": Write("script", ["job.json"], {"script.json": {"titleCandidates": ["제목"]}}),
             "review": Write("review", ["script.json"], {"review.json": {"verdict": "pass"}}),
             "scenes": Write("scenes", ["script.json"], {"scenes.json": scenes_doc()}),
@@ -249,6 +261,30 @@ class VisualsAndRenderTest(MediaCase):
         self.assertEqual(path, "/render")
         self.assertEqual(body["timeline"], str(self.job_dir(job_id) / "timeline.json"))
         self.assertEqual(body["out"], str(self.job_dir(job_id) / "render" / "final.mp4"))
+
+    def test_render_normalizes_loudness_in_place(self):
+        job_id = self.new_job()
+
+        self.run_until(job_id, "render")
+
+        final = self.job_dir(job_id) / "render" / "final.mp4"
+        (src, dst, kw) = self.normalized[0]
+        self.assertEqual((src, kw), (final, {"target_i": -14.0, "true_peak": -1.5}))
+        self.assertNotEqual(dst, final)  # 임시 파일에 쓰고 이름을 바꾼다 (규칙 5)
+        self.assertEqual(final.read_bytes(), b"fake-mp4")
+        self.assertEqual([p.name for p in final.parent.iterdir()], ["final.mp4"])
+
+    def test_normalize_failure_is_deterministic_from_render(self):
+        import subprocess
+
+        self.normalize_error = subprocess.CalledProcessError(1, ["ffmpeg"], stderr="Invalid data found")
+        job_id = self.new_job()
+
+        self.run_until(job_id, "render")
+
+        st = self.status(job_id, "render")
+        self.assertEqual((st["status"], st["kind"], st["retryFrom"]), ("failed", "deterministic", "render"))
+        self.assertIn("음량", st["error"])
 
     def test_render_errors(self):
         for status, kind, retry_from in ((409, "transient", None), (500, "transient", None), (422, "deterministic", "scenes")):

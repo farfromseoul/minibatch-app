@@ -81,13 +81,13 @@ tests/                  # 단위 테스트 (unittest)
 | tts | 발음 사전(`content/pronunciation.yaml`) 적용 → tts-worker `POST /synthesize`(카테고리 목소리) → `tts/`, `tts.json`(원문·읽는 문장·길이) | 연결 실패·시간 초과·5xx transient, 4xx deterministic |
 | timeline | 음성 길이로 장면·자막·음성 시작 프레임 확정(`app/pipeline/timeline_calc.py`) | 55~65초 밖이면 deterministic `retry_from=script` |
 | visuals | 생성 클립 장면만 처리. `clip_engine: none`이면 그대로 통과 | 생성기는 Phase 2 |
-| render | render-worker `POST /render`(`MINIBATCH_RENDER_WORKER_URL`) → `render/final.mp4` | 409·5xx transient, 422 deterministic `retry_from=scenes` |
+| render | render-worker `POST /render`(`MINIBATCH_RENDER_WORKER_URL`) → `render/final.mp4` → job-api 가 ffmpeg `loudnorm`(두 번: 재고 바꾸기)으로 오디오만 -14 LUFS·최대 -1.5 dBTP 로 맞춤(영상은 복사) | 409·5xx transient, 422 deterministic `retry_from=scenes`, 음량 맞추기 실패 deterministic `retry_from=render` |
 
 ## 게시 단계 (qc · upload)
 
 | 단계 | 하는 일 | 실패 |
 | --- | --- | --- |
-| qc | ffprobe·ffmpeg(`ebur128`, `silencedetect`)로 길이 55~65초, 1080×1920·30fps, 프레임 수 ±1, AAC 1개, 무음 2.5초 이하, 자막이 영상 안·겹침 없음 → `qc.json`. 음량은 -14±2 LUFS 밖이면 **경고만** (기준값 미확인) | deterministic. `retry_from` = 길이 script, 자막 scenes, 무음 tts, 해상도·프레임·오디오 render (어긋난 것 중 가장 앞) |
+| qc | ffprobe·ffmpeg(`ebur128`, `silencedetect`)로 길이 55~65초, 1080×1920·30fps, 프레임 수 ±1, AAC 1개, 무음 2.5초 이하, 자막이 영상 안·겹침 없음, 음량 -14±2 LUFS → `qc.json` | deterministic. `retry_from` = 길이 script, 자막 scenes, 무음 tts, 해상도·프레임·오디오·음량 render (어긋난 것 중 가장 앞) |
 | upload | 비공개 업로드(제목: 시리즈면 `시리즈 N화: 화 제목`, 아니면 제목 후보 1번. 설명: 후킹·요약·해시태그·시리즈 재생목록 링크, 끝에 고지 문구는 연결부가 항상 붙임). 시리즈면 재생목록(공개)을 처음 한 번 만들고 끝에 넣음 → `upload.json` | 할당량 quota(`retryAt` 태평양 자정 5분 뒤), 연결·5xx transient, 토큰 만료·4xx deterministic. 같은 파일은 다시 올리지 않음(`publication.uploaded_sha256`), 다시 렌더하면 새로 올리고 `replaces`에 앞 영상 ID |
 
 ## 설정 (환경 변수)
