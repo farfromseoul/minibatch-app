@@ -23,6 +23,15 @@ RUN npx remotion browser ensure
 
 COPY --chown=node:node src ./src
 
+
+# 화면 코드를 브라우저용으로 미리 묶는다(build/). 서버가 시작할 때마다 묶지 않는다 (공식 문서: 번들 재사용)
+RUN npm run build
+
+COPY --chown=node:node server ./server
+
+ENV MINIBATCH_DATA_DIR=/data
 EXPOSE 8091
-# 렌더 서버(server/render-server.ts)는 작업 순서 20에서 생긴다. 지금은 버전 확인만 한다
-CMD ["npx", "remotion", "versions"]
+# Node 22 가 TypeScript 를 그대로 실행한다 (타입만 지움)
+CMD ["node", "server/render-server.mts"]
+
+

@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "fps": 30,
+  "width": 1080,
+  "height": 1920,
+  "durationInFrames": 150,
+  "theme": "default",
+  "scenes": [
+    {
+      "id": "s01",
+      "fromFrame": 0,
+      "durationInFrames": 60,
+      "visual": { "type": "template", "component": "TitleReveal", "props": { "title": "RAG", "subtitle": "검색 증강 생성" } },
+      "animationPreset": "pop"
+    },
+    {
+      "id": "s02",
+      "fromFrame": 60,
+      "durationInFrames": 90,
+      "visual": {
+        "type": "template",
+        "component": "FlowDiagram",
+        "props": {
+          "nodes": [{ "id": "q", "label": "질문" }, { "id": "r", "label": "검색" }, { "id": "l", "label": "LLM" }, { "id": "a", "label": "답변" }],
+          "edges": [["q", "r"], ["r", "l"], ["q", "l"], ["l", "a"]],
+          "revealOrder": ["q", "r", "l", "a"]
+        }
+      },
+      "animationPreset": "sequential"
+    }
+  ],
+  "audio": [{ "src": "tts/s01.wav", "fromFrame": 6 }],
+  "captions": [
+    { "text": "LLM이 모르는 걸 물어보면?", "fromFrame": 6, "toFrame": 55 },
+    { "text": "먼저 문서를 찾습니다.", "fromFrame": 66, "toFrame": 140 }
+  ],
+  "bgm": null
+}
