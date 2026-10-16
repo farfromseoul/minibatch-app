@@ -71,6 +71,9 @@ class AppTestCase(unittest.TestCase):
     def make_providers(self):
         return None  # LLM 단계 테스트는 가짜 레지스트리를 넣는다
 
+    def make_youtube(self):
+        return None  # 공개 전환 테스트는 가짜 YouTube 를 돌려주는 함수를 넣는다
+
     def extra_settings(self):
         return {}
 
@@ -88,6 +91,8 @@ class AppTestCase(unittest.TestCase):
             content_dir=root / "content",
             daily_job_limit=3,
             review_backlog_limit=6,
+            youtube_client_file=root / "youtube_client.json",
+            youtube_token_file=root / "youtube-token" / "youtube_token.json",
             **self.extra_settings(),
         )
         self.clock = Clock()
@@ -101,6 +106,7 @@ class AppTestCase(unittest.TestCase):
             notify=lambda url, payload: self.resumed.append((url, payload)),
             clock=self.clock,
             providers=self.make_providers(),
+            youtube=self.make_youtube(),
         )
         self.client = TestClient(self.app)
         self.client.__enter__()  # lifespan(DB 이전, 재시작 복구) 실행

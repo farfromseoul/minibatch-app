@@ -22,6 +22,7 @@ from app.pipeline.pipeline import PIPELINE
 from app.pipeline.runner import Runner
 from app.pipeline.steps import default_steps
 from app.providers import load_providers
+from app.youtube.client import YouTube
 
 from .api.routes import api, public
 
@@ -39,8 +40,9 @@ def http_notify(url: str, payload: dict) -> None:
 
 def create_app(settings: Optional[Settings] = None, *, steps: Optional[dict] = None,
                pipeline: Optional[list[str]] = None, executor: Callable = thread_executor,
-               notify: Callable = http_notify, clock: Callable = utcnow, providers=None) -> FastAPI:
-    """테스트는 가짜 단계·즉시 실행기·가짜 시계를 넣는다. 실제 서버는 환경 변수로 정한다."""
+               notify: Callable = http_notify, clock: Callable = utcnow, providers=None,
+               youtube: Optional[Callable] = None) -> FastAPI:
+    """테스트는 가짜 단계·즉시 실행기·가짜 시계·가짜 YouTube 를 넣는다. 실제 서버는 환경 변수로 정한다."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -56,6 +58,8 @@ def create_app(settings: Optional[Settings] = None, *, steps: Optional[dict] = N
         # 제공자 설정: 넘겨받은 것(테스트) → 파일. 파일이 지정됐는데 틀리면 시작하지 않는다 (D19)
         registry = providers if providers is not None else (load_providers(s.providers_file) if s.providers_file else None)
         app.state.providers = registry
+        # 공개 전환(승인 뒤)에 쓰는 YouTube 연결부. 인증 파일은 부를 때 읽는다(없어도 서버는 뜬다)
+        app.state.youtube_factory = youtube or YouTube.from_settings
         app.state.runner = Runner(settings=s, db=app.state.db, pipeline=pipeline or PIPELINE, providers=registry,
                                   steps={**default_steps(), **(steps or {})},  # 넘겨준 단계가 기본을 덮는다
                                   executor=executor, notify=notify, clock=clock)

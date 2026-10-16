@@ -39,6 +39,7 @@ class Series(Base):
     status: Mapped[str] = mapped_column(String(20))  # PROPOSED | APPROVED | ACTIVE | PAUSED | DONE
     created_at: Mapped[datetime] = mapped_column(DateTime)
     approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    youtube_playlist_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)  # D26 ② 시리즈 재생목록
 
 
 class Episode(Base):
@@ -133,3 +134,5 @@ class Publication(Base):
     contains_synthetic_media: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     approved_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # 올린 영상 파일의 해시. 같은 파일이면 upload 재시도 때 다시 올리지 않는다(다시 렌더하면 다르다)
+    uploaded_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)

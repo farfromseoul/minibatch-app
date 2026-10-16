@@ -32,7 +32,9 @@ def job_detail(s: Session, job: Job) -> dict[str, Any]:
                     "at": iso(e.at)} for e in events],
         "publication": None if pub is None else {
             "platform": pub.platform, "videoId": pub.video_id, "visibility": pub.visibility,
-            "publishAt": iso(pub.publish_at), "approvedBy": pub.approved_by, "approvedAt": iso(pub.approved_at)},
+            "publishAt": iso(pub.publish_at), "approvedBy": pub.approved_by, "approvedAt": iso(pub.approved_at),
+            "containsSyntheticMedia": pub.contains_synthetic_media,
+            "url": f"https://www.youtube.com/shorts/{pub.video_id}" if pub.video_id else None},
     }
 
 
@@ -40,6 +42,7 @@ def series_detail(s: Session, series: Series) -> dict[str, Any]:
     eps = s.scalars(select(Episode).where(Episode.series_id == series.id).order_by(Episode.number)).all()
     return {"id": series.id, "category": series.category, "title": series.title, "bible": series.bible,
             "planSource": series.plan_source, "status": series.status, "approvedAt": iso(series.approved_at),
+            "playlistId": series.youtube_playlist_id,
             "episodes": [{"number": e.number, "title": e.title, "outline": e.outline, "summary": e.summary,
                           "nextTeaser": e.next_teaser, "status": e.status, "jobId": e.job_id} for e in eps]}
 

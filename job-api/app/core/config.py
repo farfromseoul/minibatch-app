@@ -23,6 +23,9 @@ class Settings:
     # 렌더링은 항상 Remotion (D5) 이라 제공자가 아닌 고정 주소다
     render_worker_url: str = "http://render-worker:8091"
     render_timeout_sec: int = 1800
+    # YouTube: 클라이언트 파일(compose secret)과 갱신 토큰 파일(폴더째 붙인다, 아키텍처 "비밀 값"). 실행계획 15번에서 만든다
+    youtube_client_file: Path = Path("/run/secrets/youtube_client")
+    youtube_token_file: Path = Path("/run/minibatch/youtube-token/youtube_token.json")
     extra: dict = field(default_factory=dict)
 
     @classmethod
@@ -40,6 +43,8 @@ class Settings:
             resume_url_prefix=env.get("MINIBATCH_RESUME_URL_PREFIX", "http://n8n:5678/"),
             providers_file=Path(env.get("MINIBATCH_PROVIDERS_FILE", "/etc/minibatch/providers.yaml")),
             render_worker_url=env.get("MINIBATCH_RENDER_WORKER_URL", "http://render-worker:8091"),
+            youtube_client_file=Path(env.get("MINIBATCH_YOUTUBE_CLIENT_FILE", "/run/secrets/youtube_client")),
+            youtube_token_file=Path(env.get("MINIBATCH_YOUTUBE_TOKEN_FILE", "/run/minibatch/youtube-token/youtube_token.json")),
         )
 
     @property

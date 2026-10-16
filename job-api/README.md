@@ -14,7 +14,10 @@ app/
     pipeline.py         # 단계 순서 PIPELINE
     runner.py           # 단계 실행 규칙 1~8
     files.py            # 해시 (멱등 판정)
-    steps/              # 단계 구현: topic, script, review, scenes, tts, timeline, visuals, render (qc·upload 는 20-d3)
+    steps/              # 단계 구현: topic, script, review, scenes, tts, timeline, visuals, render, qc, upload
+  media/ffmpeg.py       # ffprobe·ffmpeg 측정 (qc)
+  youtube/client.py     # YouTube Data API: 갱신 토큰, 재개 가능한 업로드, 재생목록, 공개 범위, 설명란
+  publish/approve.py    # 승인 뒤 공개 전환, 앞 화 설명란 다음 화 링크 (승인 기록 검사는 YouTube 호출 바로 앞)
   llm/                  # LLM 연결부, 재요청, 프롬프트 파일
   providers.py          # providers.yaml 읽기·검사
   schemas/templates.py  # 템플릿 속성 규격
@@ -44,13 +47,14 @@ tests/                  # 단위 테스트 (unittest)
 
 | 메서드 | 경로 | 설명 |
 | --- | --- | --- |
-| GET | `/healthz` | DB, 디스크 여유 |
+| GET | `/healthz` | DB, 디스크 여유, LLM 서버·tts-worker·render-worker 응답, YouTube 갱신 토큰(없음·6일 지남 경고). 작업자가 죽어도 200 + 경고 |
 | GET | `/pipeline` | 단계 순서 |
 | POST | `/jobs` | `{topic}` 직접, `{seriesId}` 다음 화, `{}` 자동 선정(시리즈 → 승인된 주제). 중복 주제 409, 앞 화 미승인 409, 하루 한도·검토 적체 409 |
 | GET | `/jobs`, `/jobs?status=REVIEW`, `/jobs/{id}` | 조회 (상세에 단계 시도, 산출물, 상태 기록, 게시 정보) |
 | POST·GET | `/jobs/{id}/steps/{step}` | 단계 실행 / 상태 |
 | POST | `/jobs/{id}/reset?from=<단계>` | 되돌리기 |
-| POST | `/jobs/{id}/approve` `{approvedBy, publishAt?}`, `/reject` `{rejectedBy, reason}` | REVIEW 에서만. 시리즈 화면 화·시리즈 상태도 바꾼다 |
+| POST | `/jobs/{id}/approve` `{approvedBy, publishAt?}`, `/reject` `{rejectedBy, reason}` | REVIEW 에서만. 시리즈 화면 화·시리즈 상태도 바꾼다. 승인은 영상이 올라가 있으면 바로 공개 전환(`publishAt`이 미래면 예약): 응답 `publish` = `{ok, status}` 또는 `{ok: false, kind, error}`(승인은 남고 APPROVED) |
+| POST | `/jobs/{id}/publish` | APPROVED 작업의 공개 전환을 다시 한다. 시리즈 N화면 N-1화 설명란에 다음 화 링크(실패하면 `warnings`). 승인 기록 없음 409 `not_approved`, YouTube 실패 502 `youtube_<transient\|quota\|deterministic>` |
 | POST·GET | `/series`, `/series/{id}`, `/series/{id}/resume` | 사용자 작성 시리즈 등록(바로 APPROVED), 조회, 멈춘 시리즈 다시 진행 |
 | POST·GET | `/topics`, `/topics?status=`, `/topics/{id}/approve`, `/reject` | 사용자 주제 추가(READY), 조회, 자동 생성 주제 승인·반려 |
 | POST | `/topics/generate` `{category, count}` | LLM 이 주제 후보를 만들어 PROPOSED 로 저장 (기존·중복 제외). 단계와 같은 전역 잠금(409 busy), LLM 없음 503 |
@@ -79,6 +83,13 @@ tests/                  # 단위 테스트 (unittest)
 | visuals | 생성 클립 장면만 처리. `clip_engine: none`이면 그대로 통과 | 생성기는 Phase 2 |
 | render | render-worker `POST /render`(`MINIBATCH_RENDER_WORKER_URL`) → `render/final.mp4` | 409·5xx transient, 422 deterministic `retry_from=scenes` |
 
+## 게시 단계 (qc · upload)
+
+| 단계 | 하는 일 | 실패 |
+| --- | --- | --- |
+| qc | ffprobe·ffmpeg(`ebur128`, `silencedetect`)로 길이 55~65초, 1080×1920·30fps, 프레임 수 ±1, AAC 1개, 무음 2.5초 이하, 자막이 영상 안·겹침 없음 → `qc.json`. 음량은 -14±2 LUFS 밖이면 **경고만** (기준값 미확인) | deterministic. `retry_from` = 길이 script, 자막 scenes, 무음 tts, 해상도·프레임·오디오 render (어긋난 것 중 가장 앞) |
+| upload | 비공개 업로드(제목: 시리즈면 `시리즈 N화: 화 제목`, 아니면 제목 후보 1번. 설명: 후킹·요약·해시태그·시리즈 재생목록 링크, 끝에 고지 문구는 연결부가 항상 붙임). 시리즈면 재생목록(공개)을 처음 한 번 만들고 끝에 넣음 → `upload.json` | 할당량 quota(`retryAt` 태평양 자정 5분 뒤), 연결·5xx transient, 토큰 만료·4xx deterministic. 같은 파일은 다시 올리지 않음(`publication.uploaded_sha256`), 다시 렌더하면 새로 올리고 `replaces`에 앞 영상 ID |
+
 ## 설정 (환경 변수)
 
 | 이름 | 기본값 |
@@ -92,6 +103,8 @@ tests/                  # 단위 테스트 (unittest)
 | `MINIBATCH_RESUME_URL_PREFIX` | `http://n8n:5678/` (재개 주소는 이 주소로 시작해야 함) |
 | `MINIBATCH_PROVIDERS_FILE` | `/etc/minibatch/providers.yaml` (없거나 틀리면 시작하지 않음) |
 | `MINIBATCH_RENDER_WORKER_URL` | `http://render-worker:8091` |
+| `MINIBATCH_YOUTUBE_CLIENT_FILE` | `/run/secrets/youtube_client` (데스크톱 앱 클라이언트 JSON) |
+| `MINIBATCH_YOUTUBE_TOKEN_FILE` | `/run/minibatch/youtube-token/youtube_token.json` (실행계획 15번에서 만든 갱신 토큰. 없어도 서버는 뜨고 upload·publish 가 deterministic 실패) |
 
 uvicorn 작업자(worker)는 하나로 띄운다. 전역 잠금이 프로세스 안의 잠금이다.
 

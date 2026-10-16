@@ -1,10 +1,12 @@
 """job-api HTTP 경로 (아키텍처 "인터페이스 - job-api"). /healthz 말고는 모두 내부 토큰이 필요하다."""
 from __future__ import annotations
 
+import json
 import shutil
 from datetime import datetime
 from typing import Any, Optional
 
+import httpx
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
@@ -15,6 +17,8 @@ from app.core.errors import ApiError
 from app.db.models import Job, Series, Topic
 from app.domain import generation, review, series as series_domain, topics as topic_domain
 from app.domain.jobs import create_job
+from app.publish import approve as publishing
+from app.youtube.client import YouTubeError
 
 from .views import job_detail, job_summary, series_detail, topic_view
 
@@ -120,10 +124,60 @@ def healthz(request: Request) -> dict[str, Any]:
     checks["disk_free_gb"] = round(free_gb, 1)
     if free_gb < st.settings.disk_free_warn_gb:
         warnings.append(f"디스크 여유 {free_gb:.0f}GB < {st.settings.disk_free_warn_gb}GB")
-    # LLM 서버·tts-worker·render-worker 연결 확인은 작업 순서 20-d 에서 더한다
+    # 작업자가 죽어도 job-api 는 살아 있다. 상태는 ok 로 두고 경고만 단다 (n8n 이 5분마다 보고 알린다)
+    for name, label, url in _worker_urls(st):
+        checks[name] = _reachable(url)
+        if not checks[name]:
+            warnings.append(f"{label} 응답 없음: {url}")
+    checks["youtube_token"], token_warning = _youtube_token(st)
+    if token_warning:
+        warnings.append(token_warning)
     status = "ok" if checks["db"] else "error"
     return JSONResponse(status_code=200 if checks["db"] else 503,
                         content={"status": status, "checks": checks, "warnings": warnings})
+
+
+def _worker_urls(st) -> list[tuple[str, str, str]]:
+    urls = []
+    registry = st.providers
+    if registry is not None:
+        cfg = getattr(registry, "config", None) or {}
+        llm = cfg.get("llm") or {}
+        name = (llm.get("steps") or {}).get("script")
+        base = ((llm.get("providers") or {}).get(name) or {}).get("base_url")
+        if base:
+            urls.append(("llm", "LLM 서버", base.rstrip("/") + "/models"))
+        urls.append(("tts", "tts-worker", registry.tts_settings()["url"].rstrip("/") + "/healthz"))
+    urls.append(("render", "render-worker", st.settings.render_worker_url.rstrip("/") + "/healthz"))
+    return urls
+
+
+def _reachable(url: str) -> bool:
+    try:
+        return httpx.get(url, timeout=2.0).status_code == 200
+    except httpx.HTTPError:
+        return False
+
+
+def _youtube_token(st) -> tuple[bool, Optional[str]]:
+    """토큰 값은 읽기만 하고 내보내지 않는다. 동의 화면이 테스트 상태면 7일 뒤 만료라 6일째부터 알린다 (R20)"""
+    path = st.settings.youtube_token_file
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False, "YouTube 갱신 토큰 파일이 없다: 실행계획 15번으로 발급한다"
+    if not data.get("refresh_token"):
+        return False, "YouTube 갱신 토큰이 비어 있다: 실행계획 15번 ②~④로 다시 발급한다"
+    created = data.get("created_at")
+    if created:
+        try:
+            age = st.clock() - datetime.fromisoformat(created.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            return True, None
+        if age.days >= 6:
+            return True, (f"YouTube 갱신 토큰 발급 {age.days}일 지남. 동의 화면이 테스트 상태면 7일에 만료된다: "
+                          f"실행계획 15번 ②~④로 다시 발급한다")
+    return True, None
 
 
 # ---------- 단계 순서
@@ -196,12 +250,36 @@ def reset(job_id: str, request: Request, from_: str = Query(alias="from")) -> di
 
 @api.post("/jobs/{job_id}/approve")
 def approve(job_id: str, body: ApproveBody, request: Request) -> dict[str, Any]:
+    """승인을 기록하고 바로 공개 전환한다. YouTube 가 실패해도 승인은 남고(APPROVED), POST /publish 로 다시 한다"""
     st = _st(request)
     with st.db() as s:
         job = _get_job(s, job_id)
         review.approve(s, st.settings, job, st.clock(), body.approvedBy, body.publishAt)
         s.commit()
-        return job_summary(job)
+        if not publishing.has_video(s, job):
+            return {**job_summary(job), "publish": {"ok": False, "skipped": "업로드된 영상이 없다"}}
+        try:
+            result = publishing.publish(s, st.settings, job, st.youtube_factory, st.clock())
+            s.commit()
+        except YouTubeError as e:
+            s.rollback()
+            result = {"ok": False, "kind": e.kind, "error": e.message}
+        return {**job_summary(job), "publish": result}
+
+
+@api.post("/jobs/{job_id}/publish")
+def publish(job_id: str, request: Request) -> dict[str, Any]:
+    """승인 뒤 공개 전환이 실패했을 때 다시 한다. YouTube 오류는 502 와 youtube_<종류>"""
+    st = _st(request)
+    with st.db() as s:
+        job = _get_job(s, job_id)
+        try:
+            result = publishing.publish(s, st.settings, job, st.youtube_factory, st.clock())
+        except YouTubeError as e:
+            s.rollback()
+            raise ApiError(502, f"youtube_{e.kind}", e.message) from e
+        s.commit()
+        return {**job_summary(job), "publish": result}
 
 
 @api.post("/jobs/{job_id}/reject")
