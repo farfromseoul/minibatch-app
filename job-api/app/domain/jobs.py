@@ -1,0 +1,123 @@
+"""작업 만들기 (기획서 F1·F2, 아키텍처 D15·D24·D25).
+
+주제 출처: 직접 준 주제, 시리즈 다음 화, 자동 선정(시리즈 → 승인된 단독 주제).
+"""
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+from typing import Optional
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from app.core.errors import ApiError
+from app.core.timeutil import kst_date, kst_day_start_utc
+from app.db.models import Episode, Job, JobEvent, Series, Topic
+
+from .text import normalize_topic
+
+INACTIVE = ("FAILED", "REJECTED")  # 중복 검사에서 빼는 상태
+
+
+def ensure_category(settings, key: str) -> None:
+    if not settings.category_file(key).is_file():
+        raise ApiError(400, "unknown_category", f"카테고리 설정이 없다: {key}")
+
+
+def _next_job_id(s: Session, now: datetime) -> str:
+    prefix = f"short-{kst_date(now)}-"
+    ids = s.scalars(select(Job.id).where(Job.id.like(prefix + "%"))).all()
+    n = max((int(i.rsplit("-", 1)[1]) for i in ids), default=0) + 1
+    return f"{prefix}{n:03d}"
+
+
+def _check_duplicate(s: Session, settings, key: str, now: datetime) -> None:
+    since = now - timedelta(days=settings.duplicate_window_days)
+    dup = s.scalar(select(Job.id).where(Job.topic_key == key, Job.status.not_in(INACTIVE),
+                                        Job.created_at >= since))
+    if dup:
+        raise ApiError(409, "duplicate_topic", f"최근 {settings.duplicate_window_days}일 안에 같은 주제의 작업이 있다: {dup}")
+
+
+def _insert(s: Session, settings, now: datetime, *, topic: str, category: str, topic_id: Optional[int] = None,
+            series_id: Optional[str] = None, episode_number: Optional[int] = None) -> Job:
+    key = normalize_topic(topic)
+    _check_duplicate(s, settings, key, now)
+    job = Job(id=_next_job_id(s, now), topic_id=topic_id, topic=topic, topic_key=key, category=category,
+              series_id=series_id, episode_number=episode_number, status="PENDING", current_step=None,
+              video_engine="remotion", input={"topic": topic, "category": category}, created_at=now, updated_at=now)
+    s.add(job)
+    # relationship 을 선언하지 않아 저장 순서가 보장되지 않는다. 작업을 먼저 넣어야
+    # 이 작업을 가리키는 기록(job_event, episode.job_id)이 외래 키에 걸리지 않는다
+    s.flush()
+    s.add(JobEvent(job_id=job.id, from_status=None, to_status="PENDING", actor="job-api", reason=None, at=now))
+    return job
+
+
+def _next_episode(s: Session, series: Series) -> Episode:
+    if series.status == "PAUSED":
+        raise ApiError(409, "series_paused", "앞 화가 반려돼 시리즈가 멈춰 있다. resume 후 다시 만든다")
+    if series.status == "DONE":
+        raise ApiError(409, "series_done", "시리즈의 모든 화를 만들었다")
+    if series.status not in ("APPROVED", "ACTIVE"):
+        raise ApiError(409, "series_not_approved", "승인되지 않은 시리즈 계획이다")
+    ep = s.scalar(select(Episode).where(Episode.series_id == series.id, Episode.status == "PLANNED")
+                  .order_by(Episode.number))
+    if ep is None:
+        raise ApiError(409, "series_no_planned_episode", "만들 화가 없다")
+    if ep.number > 1:
+        prev = s.scalar(select(Episode).where(Episode.series_id == series.id, Episode.number == ep.number - 1))
+        if prev is None or prev.status != "APPROVED":
+            raise ApiError(409, "previous_episode_not_approved",
+                           f"{ep.number - 1}화가 승인된 뒤에 {ep.number}화를 만든다 (D24)")
+    return ep
+
+
+def _create_episode_job(s: Session, settings, now: datetime, series: Series) -> Job:
+    ep = _next_episode(s, series)
+    job = _insert(s, settings, now, topic=ep.title, category=series.category, series_id=series.id,
+                  episode_number=ep.number)
+    ep.status = "IN_PRODUCTION"
+    ep.job_id = job.id
+    series.status = "ACTIVE"
+    return job
+
+
+def _check_auto_limits(s: Session, settings, now: datetime) -> None:
+    today = s.scalar(select(func.count()).select_from(Job).where(Job.created_at >= kst_day_start_utc(now)))
+    if today >= settings.daily_job_limit:
+        raise ApiError(409, "daily_limit_reached", f"오늘 만든 작업이 한도({settings.daily_job_limit})에 닿았다")
+    backlog = s.scalar(select(func.count()).select_from(Job).where(Job.status == "REVIEW"))
+    if backlog >= settings.review_backlog_limit:
+        raise ApiError(409, "review_backlog_full", f"검토 대기가 {backlog}건이라 새 작업을 만들지 않는다 (D15)")
+
+
+def create_job(s: Session, settings, now: datetime, *, topic: Optional[str], category: str,
+               series_id: Optional[str]) -> Job:
+    if series_id:
+        series = s.get(Series, series_id)
+        if series is None:
+            raise ApiError(404, "series_not_found", f"시리즈가 없다: {series_id}")
+        return _create_episode_job(s, settings, now, series)
+    if topic:
+        ensure_category(settings, category)
+        return _insert(s, settings, now, topic=topic, category=category)
+    return _auto_select(s, settings, now)
+
+
+def _auto_select(s: Session, settings, now: datetime) -> Job:
+    _check_auto_limits(s, settings, now)
+    for series in s.scalars(select(Series).where(Series.status.in_(("APPROVED", "ACTIVE")))
+                            .order_by(Series.created_at)):
+        try:
+            return _create_episode_job(s, settings, now, series)
+        except ApiError:
+            continue  # 앞 화 승인 대기 등. 다음 후보로
+    for t in s.scalars(select(Topic).where(Topic.status == "READY").order_by(Topic.created_at, Topic.id)):
+        try:
+            job = _insert(s, settings, now, topic=t.title, category=t.category, topic_id=t.id)
+        except ApiError:
+            continue
+        t.status = "USED"
+        return job
+    raise ApiError(409, "no_candidates", "만들 수 있는 시리즈 화나 승인된 주제가 없다")

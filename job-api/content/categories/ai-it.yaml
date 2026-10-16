@@ -1,0 +1,22 @@
+# 카테고리 설정 묶음 (아키텍처 D23). 단계 코드는 job.json 의 category 로 이 파일을 읽는다.
+# 카테고리를 늘릴 때는 이 폴더에 파일을 더한다. TTS·LLM 교체(providers.yaml)와는 따로 움직인다.
+key: ai-it
+title: AI·IT 개념 설명
+audience: 비전공 개발 입문자
+script:
+  structure: "후킹 1문장 → 설명 → 예시 → 요약 1문장"
+  forbidden:
+    - 출처 없는 수치·통계
+    - 과장 표현(완벽하게, 100% 등)
+  max_sentence_chars: 40
+review:
+  rules: [기술 사실 오류, 과장, 모호한 표현]
+templates: []            # scenes 단계가 고를 템플릿 목록. render 템플릿이 생기면 채운다 (작업 순서 20-c)
+youtube:
+  category_id: "28"      # 과학기술 (미확인: videoCategories.list 로 확인)
+  disclosure: AI 도구로 대본과 음성을 만들었습니다
+voices:                  # 엔진별 목소리. 없는 엔진이면 providers.yaml 의 기본값
+  supertonic: M1
+  melotts: KR
+topic_generation:
+  prompt_hint: 입문자가 자주 헷갈리는 AI·IT 개념
