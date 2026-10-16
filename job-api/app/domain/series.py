@@ -61,4 +61,5 @@ def story_for(s: Session, series_id: str, number: int, keep: int = 3) -> dict[st
         "previous": previous,
         "outline": eps[number].outline,
         "nextOutline": nxt.outline if nxt else None,
+        "nextTitle": nxt.title if nxt else None,  # 끝 장면 "다음 화: 제목" (D26)
     }

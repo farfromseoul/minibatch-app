@@ -12,6 +12,7 @@ from typing import Any
 
 from app.core.category import load_category
 from app.llm.prompting import render
+from app.text.cta import outro_for
 from app.text.sentences import count_chars, script_sentences
 
 from .base import StepContext, StepFailure
@@ -62,9 +63,11 @@ def _series_block(series: dict | None) -> str:
         "series_block", series_title=series["title"], episode=series["episode"], total=series["totalEpisodes"],
         bible=json.dumps(series["bible"], ensure_ascii=False), previous=previous, outline=series["outline"],
         next_outline=series["nextOutline"] or "(마지막 화)",
-        recap_rule=("recap: '지난 이야기'로 시작하는 한 문장. 앞 화를 이어받는다 (대본 맨 앞에 읽는다)"
+        recap_rule=("recap: '지난 이야기'로 시작하는 짧은 한 문장(25자 안팎). 앞 화를 이어받는다 (대본 맨 앞에 읽는다)"
                     if series["episode"] > 1 else ""),
-        teaser_rule=("nextTeaser: 다음 화를 궁금하게 만드는 한 문장 (대본 맨 끝에 읽는다)" if series["nextOutline"] else ""))
+        teaser_rule=("nextTeaser: 다음 화를 궁금하게 만드는 짧은 한 문장(25자 안팎). 질문이나 반전으로 끝낸다. "
+                     "'다음 화에서는 ~합니다' 같은 설명문은 쓰지 않는다. 예: '그런데 AI가 처음 보는 문제를 만나면?' (대본 맨 끝에 읽는다)"
+                     if series["nextOutline"] else ""))
     return text
 
 
@@ -78,8 +81,12 @@ class ScriptStep:
         cat = load_category(ctx.settings, job["category"])
         rules = cat.get("script", {})
         max_sentence = int(rules.get("max_sentence_chars", 40))
-        target = round(job["targetDurationSec"] * ctx.providers.chars_per_sec * 0.9)
         series = job.get("series")
+        cps = ctx.providers.chars_per_sec
+        target = round(job["targetDurationSec"] * cps * 0.9)
+        outro = outro_for(cat, series)
+        if outro:  # 끝 장면 문장(코드가 붙임)과 장면 여백(약 0.5초)만큼 대본을 줄인다 (D26)
+            target -= count_chars(outro["line"]) + round(0.5 * cps)
         total_n, min_chars = sentence_plan(target, max_sentence)
         body_n = total_n - 2  # hook 1 + body + summary 1
         prompt, version = render(
@@ -96,7 +103,9 @@ class ScriptStep:
             for i, sentence in enumerate(script_sentences(data), start=1):
                 if count_chars(sentence) > max_sentence:
                     problems.append(f"{i}번째 문장이 {count_chars(sentence)}자다. {max_sentence}자 이내로 나눈다: {sentence}")
-            total = sum(count_chars(t) for t in [data["hook"], *data["body"], data["summary"]])
+            # 말하는 문장 전부(지난 이야기·다음 화 예고 포함)를 센다
+            # (2026-10-16 시리즈 2화: 후킹~요약만 세서 253자로 통과했지만 실제 318자, 영상 72.7초)
+            total = sum(count_chars(t) for t in script_sentences(data))
             if abs(total - target) > target * TOLERANCE:
                 gap = abs(target - total)
                 more = math.ceil(gap / CHARS_PER_SENTENCE)
@@ -114,8 +123,10 @@ class ScriptStep:
             ctx.meta["trimmed"] = []  # 시도마다 새로 센다
 
             def total() -> int:
-                return sum(count_chars(t) for t in [data.get("hook", ""), *data["body"], data.get("summary", "")])
-            while total() > target * TRIM_TO and len(data["body"]) > 3:
+                return sum(count_chars(t) for t in script_sentences(data)) if data.get("hook") and data.get("summary") else 0
+            # 빼고 나서도 하한(목표 −7%) 이상일 때만 뺀다. 너무 빼서 짧아지지 않게
+            while (total() > target * TRIM_TO and len(data["body"]) > 3
+                   and total() - count_chars(data["body"][-1]) >= target * (1 - TOLERANCE)):
                 ctx.meta.setdefault("trimmed", []).append(data["body"].pop())
             return data
 
@@ -126,6 +137,6 @@ class ScriptStep:
         if out.problems:  # 글자 수만 어긋남
             ctx.note_degraded("; ".join(out.problems))
         data = dict(out.data)
-        chars = sum(count_chars(t) for t in [data["hook"], *data["body"], data["summary"]])
+        chars = sum(count_chars(t) for t in script_sentences(data))
         data["meta"] = meta_of(out, version, targetChars=target, charCount=chars, trimmedSentences=ctx.meta.get("trimmed", []))
         ctx.write_json("script.json", data)

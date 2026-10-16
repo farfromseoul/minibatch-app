@@ -84,6 +84,17 @@ class ScriptStepTest(LlmStepCase):
         self.assertTrue(s["summary"].startswith("문장91"))  # 요약은 남는다
         self.assertEqual(len(s["meta"]["trimmedSentences"]), 4)
 
+    def test_trim_never_goes_below_the_lower_bound(self):
+        # 후킹·요약 40자, 설명 39자 × 7 = 353자. 한 문장 빼면 314(+4% 안), 두 문장 빼면 275(하한 281 미만)
+        self.llm.responses = [script_of(39, 9)]
+
+        job_id = self.job_until("script")
+
+        s = self.read(job_id, "script.json")
+        self.assertEqual(s["meta"]["charCount"], 314)
+        self.assertEqual(len(s["meta"]["trimmedSentences"]), 1)
+        self.assertEqual(len(self.llm.requests), 1)
+
     def test_still_off_length_after_retries_is_degraded_not_failed(self):
         self.llm.responses = [script_of(15, 8)] * 3
 
@@ -244,3 +255,85 @@ class ScenesStepTest(LlmStepCase):
         st = self.status(job_id, "scenes")
         self.assertEqual((st["kind"], st["retryFrom"]), ("deterministic", "scenes"))
         self.assertIn("없는노드", st["error"])
+
+
+class SeriesOutroTest(LlmStepCase):
+    """시리즈 연결 ① (D26): 영상 끝 안내 문구와 다음 화 화면은 코드가 붙인다. 문구는 카테고리 파일"""
+
+    PLAN = {"key": "ai-office", "title": "민지의 AI 적응기", "bible": {"premise": "민지가 매화 배운다"},
+            "episodes": [{"number": 1, "title": "AI가 뭐길래", "outline": "AI의 뜻"},
+                         {"number": 2, "title": "머신러닝은 뭐가 달라", "outline": "데이터로 배운다"}]}
+
+    def setUp(self):
+        super().setUp()
+        cat = self.settings.content_dir / "categories" / "ai-it.yaml"
+        cat.write_text(cat.read_text(encoding="utf-8").split("\nseries:")[0] + """
+series:
+  cta_next:
+    - "다음 이야기가 궁금하면 이어지는 영상으로!"
+    - "{next_title}, 다음 화에서 만나요!"
+  cta_end:
+    - "{series_title} 끝까지 봐 줘서 고마워요!"
+""", encoding="utf-8")
+
+    def scenes_for(self, script):
+        n = len([script.get("recap"), script["hook"], *script["body"], script["summary"], script.get("nextTeaser")]) - \
+            (0 if script.get("recap") else 1) - (0 if script.get("nextTeaser") else 1)
+        return {"scenes": [
+            {"role": "hook", "sentences": [1], "component": "TitleReveal", "props": {"title": "AI"}, "animationPreset": "pop"},
+            {"role": "summary", "sentences": list(range(2, n + 1))[:4] if n <= 5 else list(range(2, 6)), "component": "SummaryScene",
+             "props": {"points": ["정리"]}, "animationPreset": "fade"},
+        ] + ([{"role": "summary", "sentences": list(range(6, n + 1)), "component": "SummaryScene",
+               "props": {"points": ["끝"]}, "animationPreset": "fade"}] if n > 5 else [])}
+
+    def ep1(self):
+        self.post("/series", self.PLAN)
+        job = self.post("/jobs", {"seriesId": "ai-office"}).json()["id"]
+        script = script_of(33, 8, episodeSummary="민지가 AI 뜻을 배움", nextTeaser="다음엔 데이터로 배우는 법!")  # 264+예고 12 = 276자: 끝 문장 몫을 뺀 목표 안
+        self.llm.responses = [script, {"issues": [], "verdict": "pass"}, self.scenes_for(script)]
+        self.run_until(job, "scenes")
+        return job
+
+    def test_episode_with_next_gets_outro_scene_from_category(self):
+        job = self.ep1()
+
+        sc = self.read(job, "scenes.json")["scenes"]
+        last = sc[-1]
+        self.assertEqual(last["role"], "outro")
+        self.assertEqual(last["lines"], ["다음 이야기가 궁금하면 이어지는 영상으로!"])  # 1화 → 목록 첫 번째
+        self.assertEqual(last["visual"]["component"], "TitleReveal")
+        self.assertEqual(last["visual"]["props"], {"title": "다음 화", "subtitle": "머신러닝은 뭐가 달라"})
+        self.assertNotIn("이어지는 영상", self.llm.requests[2]["messages"][-1]["content"])  # LLM 에는 안 보낸다
+
+    def test_target_chars_leave_room_for_the_outro(self):
+        self.ep1()
+
+        prompt = self.llm.requests[0]["messages"][-1]["content"]
+        cta = len("다음이야기가궁금하면이어지는영상으로!")
+        expected = round(60 * 5.6 * 0.9) - cta - round(0.5 * 5.6)
+        self.assertIn(f"{expected}자", prompt)
+
+    def test_last_episode_gets_ending_line_with_series_title(self):
+        job1 = self.ep1()
+        from app.db.models import Job
+        with self.app.state.db() as s:
+            s.get(Job, job1).status = "REVIEW"
+            s.commit()
+        self.post(f"/jobs/{job1}/approve", {"approvedBy": "운영자"})
+        job2 = self.post("/jobs", {"seriesId": "ai-office"}).json()["id"]
+        script = script_of(33, 8, recap="지난 이야기: 민지는 AI 뜻을 배웠다.", episodeSummary="머신러닝을 배움")
+        self.llm.responses = [script, {"issues": [], "verdict": "pass"}, self.scenes_for(script)]
+
+        self.run_until(job2, "scenes")
+
+        last = self.read(job2, "scenes.json")["scenes"][-1]
+        self.assertEqual(last["lines"], ["민지의 AI 적응기 끝까지 봐 줘서 고마워요!"])
+        self.assertEqual(last["visual"]["props"], {"title": "끝", "subtitle": "민지의 AI 적응기"})
+
+    def test_standalone_video_has_no_outro(self):
+        script = script_of(38, 8)
+        self.llm.responses = [script, {"issues": [], "verdict": "pass"}, self.scenes_for(script)]
+
+        job = self.job_until("scenes")
+
+        self.assertNotEqual(self.read(job, "scenes.json")["scenes"][-1]["role"], "outro")

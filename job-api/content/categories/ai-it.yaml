@@ -26,3 +26,9 @@ voices:                  # 엔진별 목소리. 없는 엔진이면 providers.ya
   melotts: KR
 topic_generation:
   prompt_hint: 입문자가 자주 헷갈리는 AI·IT 개념
+series:                  # 시리즈 끝 안내 (아키텍처 D26). 운영자가 자유롭게 고친다. 여러 개면 화마다 돌아가며 쓴다
+  cta_next:              # 다음 화가 있을 때. {next_title} = 다음 화 제목, {series_title} = 시리즈 제목
+    - "다음 이야기가 궁금하시면 이어지는 영상을 확인해 주세요."
+    - "{next_title}, 다음 화에서 이어집니다!"
+  cta_end:               # 마지막 화
+    - "'{series_title}' 시리즈를 끝까지 봐 주셔서 고마워요!"

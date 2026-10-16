@@ -14,6 +14,7 @@ from typing import Any
 from app.core.category import load_category
 from app.llm.prompting import render
 from app.schemas.templates import TEMPLATES, check_props
+from app.text.cta import outro_for
 from app.text.sentences import script_sentences
 
 from .base import StepContext, StepFailure
@@ -88,13 +89,20 @@ class ScenesStep:
         out = ask(ctx, [{"role": "user", "content": prompt}], _schema(templates), "scenes", check)
         if out.problems:
             raise StepFailure("deterministic", "장면 구성 규칙을 지키지 못했다: " + "; ".join(out.problems)[:800], retry_from="scenes")
+        scenes = [{"role": sc["role"], "lines": [sentences[n - 1] for n in sc["sentences"]],
+                   "visual": {"type": "template", "component": sc["component"], "props": sc["props"]},
+                   "animationPreset": sc["animationPreset"], "padAfterSec": PAD_AFTER_SEC}
+                  for sc in out.data["scenes"]]
+        outro = outro_for(cat, job.get("series"))
+        if outro:  # 시리즈 끝 장면은 코드가 붙인다. 문구는 카테고리 파일 (D26)
+            scenes.append({"role": "outro", "lines": [outro["line"]],
+                           "visual": {"type": "template", "component": "TitleReveal",
+                                      "props": {"title": outro["title"], "subtitle": outro["subtitle"]}},
+                           "animationPreset": "pop", "padAfterSec": 0.5})
         ctx.write_json("scenes.json", {
             "schemaVersion": 1,
             "jobId": job["jobId"],
             "title": script["titleCandidates"][0],
-            "scenes": [{"id": f"s{i:02d}", "role": sc["role"], "lines": [sentences[n - 1] for n in sc["sentences"]],
-                        "visual": {"type": "template", "component": sc["component"], "props": sc["props"]},
-                        "animationPreset": sc["animationPreset"], "padAfterSec": PAD_AFTER_SEC}
-                       for i, sc in enumerate(out.data["scenes"], start=1)],
+            "scenes": [{"id": f"s{i:02d}", **sc} for i, sc in enumerate(scenes, start=1)],
             "meta": meta_of(out, version),
         })
