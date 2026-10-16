@@ -120,7 +120,8 @@ class UploadStep:
         disclosure = str(ycfg.get("disclosure") or DEFAULT_DISCLOSURE).strip()
         video = ctx.job_dir / "render" / "final.mp4"
         digest = sha256_path(video)
-        synthetic = any(s.get("source") == "clip" for s in visuals.get("scenes", []))  # 생성 클립이 있으면 true (앱 설계 규칙 표)
+        # 생성 클립이 있으면 반드시, 카테고리가 밝히기로 했으면 템플릿만이어도 true (앱 설계 규칙 표)
+        synthetic = bool(ycfg.get("declare_synthetic")) or any(s.get("source") == "clip" for s in visuals.get("scenes", []))
 
         with ctx.db() as s:
             row = s.get(Job, ctx.job_id)

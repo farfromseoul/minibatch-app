@@ -160,18 +160,27 @@ class YouTube:
         status 를 바꿀 때 보내지 않은 값은 지워진다(공식 문서, 2026-10-16 조회). 그래서 지금 값을 읽어 함께 보낸다.
         selfDeclaredMadeForKids·containsSyntheticMedia 는 보낼 때만 바뀌므로 업로드 때 값을 그대로 둔다.
         """
+        changes: dict[str, Any] = {"privacyStatus": privacy}
+        if publish_at is not None:
+            utc = publish_at if publish_at.tzinfo is None else publish_at.astimezone(timezone.utc).replace(tzinfo=None)
+            changes["publishAt"] = utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+        return self._update_status(video_id, changes, "공개 범위 변경")
+
+    def set_synthetic(self, video_id: str, value: bool) -> dict[str, Any]:
+        """이미 올린 영상의 합성 콘텐츠 신고를 바꾼다 (공개 범위 등은 그대로)"""
+        return self._update_status(video_id, {"containsSyntheticMedia": bool(value)}, "합성 콘텐츠 신고 변경")
+
+    def _update_status(self, video_id: str, changes: dict[str, Any], what: str) -> dict[str, Any]:
+        """status 를 바꿀 때 보내지 않은 값은 지워지므로 지금 값을 읽어 함께 보낸다 (읽기 전용 값은 뺀다)"""
         res = self._send("GET", f"{API}/videos", "영상 조회", params={"part": "status", "id": video_id})
         items = res.json().get("items") or []
         if not items:
             raise YouTubeError("deterministic", f"영상이 없다: {video_id}")
         current = items[0].get("status", {})
-        status: dict[str, Any] = {k: current[k] for k in ("license", "embeddable", "publicStatsViewable") if k in current}
-        status["privacyStatus"] = privacy
-        if publish_at is not None:
-            utc = publish_at if publish_at.tzinfo is None else publish_at.astimezone(timezone.utc).replace(tzinfo=None)
-            status["publishAt"] = utc.strftime("%Y-%m-%dT%H:%M:%SZ")
-        res = self._send("PUT", f"{API}/videos", "공개 범위 변경", params={"part": "status"},
-                         json={"id": video_id, "status": status})
+        keep = ("license", "embeddable", "publicStatsViewable") + (() if "privacyStatus" in changes else ("privacyStatus",))
+        status: dict[str, Any] = {k: current[k] for k in keep if k in current}
+        status.update(changes)
+        res = self._send("PUT", f"{API}/videos", what, params={"part": "status"}, json={"id": video_id, "status": status})
         return res.json()
 
     def append_to_description(self, video_id: str, text: str, disclosure: str) -> bool:

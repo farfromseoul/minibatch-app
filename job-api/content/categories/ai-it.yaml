@@ -21,6 +21,9 @@ templates:               # scenes 단계가 고를 수 있는 템플릿 (render/
 youtube:
   category_id: "28"      # 과학기술 (미확인: videoCategories.list 로 확인)
   disclosure: AI 도구로 대본과 음성을 만들었습니다
+  # YouTube "변경되었거나 합성된 콘텐츠" 라벨. 템플릿만이면 의무는 아니지만 밝힌다 (2026-10-17 사용자 결정).
+  # false 면 생성 클립이 있을 때만 신고한다. 실사가 아닌 콘텐츠의 라벨은 펼친 설명란에 보일 수 있다
+  declare_synthetic: true
 voices:                  # 엔진별 목소리. 없는 엔진이면 providers.yaml 의 기본값
   supertonic: M1
   melotts: KR

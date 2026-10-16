@@ -219,7 +219,7 @@ class UploadTest(PublishCase):
         self.assertEqual(call["disclosure"], DISCLOSURE)  # 카테고리 파일 youtube.disclosure
         self.assertEqual(call["category_id"], "28")
         self.assertEqual(call["tags"], ["AI", "머신러닝"])
-        self.assertFalse(call["synthetic"])
+        self.assertTrue(call["synthetic"])  # ai-it 카테고리는 youtube.declare_synthetic: true (2026-10-17 사용자 결정)
         self.assertIn("AI는 문제집을 푸는 학생이에요.", call["description"])
         self.assertIn("#AI #머신러닝", call["description"])
         self.assertEqual(call["bytes"], b"mp4-v1")
@@ -227,7 +227,16 @@ class UploadTest(PublishCase):
         self.assertEqual((up["videoId"], up["privacy"], up["playlistId"]), ("VID1", "private", None))
         self.assertEqual(up["url"], "https://www.youtube.com/shorts/VID1")
         pub = self.get(f"/jobs/{job_id}").json()["publication"]
-        self.assertEqual((pub["videoId"], pub["visibility"], pub["containsSyntheticMedia"]), ("VID1", "private", False))
+        self.assertEqual((pub["videoId"], pub["visibility"], pub["containsSyntheticMedia"]), ("VID1", "private", True))
+
+    def test_template_only_is_not_synthetic_when_category_does_not_declare(self):
+        cat = self.settings.content_dir / "categories" / "ai-it.yaml"
+        cat.write_text(cat.read_text(encoding="utf-8").replace("declare_synthetic: true", "declare_synthetic: false"), encoding="utf-8")
+        job_id = self.new_job()
+
+        self.run_until(job_id, "upload")
+
+        self.assertFalse(self.yt.named("upload_video")[0]["synthetic"])  # 템플릿만이면 의무 아님 (앱 설계 규칙 표)
 
     def test_clip_scene_marks_synthetic(self):
         self.clip = True

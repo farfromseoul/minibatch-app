@@ -225,6 +225,15 @@ class PlaylistAndUpdateTest(ClientCase):
         self.assertEqual(puts[0].url.params["part"], "status")
         self.assertEqual(json.loads(puts[0].content)["id"], "VID123")
 
+    def test_declare_synthetic_keeps_other_status_values(self):
+        self.yt.set_synthetic("VID123", True)
+
+        put = [r for r in self.google.api_calls() if r.method == "PUT"][0]
+        body = json.loads(put.content)
+        self.assertEqual(put.url.params["part"], "status")
+        self.assertEqual(body["status"], {"privacyStatus": "private", "license": "youtube", "embeddable": True,
+                                          "publicStatsViewable": True, "containsSyntheticMedia": True})
+
     def test_append_before_disclosure_keeps_disclosure_last(self):
         changed = self.yt.append_to_description("VID123", "▶ 다음 화: https://youtube.com/shorts/NEXT", DISCLOSURE)
 
