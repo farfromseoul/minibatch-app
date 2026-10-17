@@ -33,6 +33,7 @@ class FakeRegistry:
         self.chars_per_sec = chars_per_sec
         self.tts_url = tts_url
         self.clip_engine = "none"
+        self.stock = {"engine": "none"}
 
     def llm(self, step):
         return self._llm

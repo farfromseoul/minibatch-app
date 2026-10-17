@@ -88,13 +88,18 @@ def next_quota_reset(now: Optional[datetime] = None) -> str:
     return nxt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _description(script: dict[str, Any], playlist_id: Optional[str]) -> str:
+def _description(script: dict[str, Any], playlist_id: Optional[str], credits: Optional[list] = None) -> str:
     parts = [p for p in (script.get("hook"), script.get("summary")) if p]
     tags = " ".join(h if h.startswith("#") else f"#{h}" for h in script.get("hashtags", []))
     if tags:
         parts.append(tags)
     if playlist_id:
         parts.append(f"▶ 시리즈 전체 보기: https://www.youtube.com/playlist?list={playlist_id}")
+    by_site: dict[str, list[str]] = {}
+    for c in credits or []:  # 스톡 영상 출처 (Pixabay API 지침: 출처를 보여 준다)
+        by_site.setdefault(c.get("site", ""), []).append(c.get("user", ""))
+    for site, users in by_site.items():
+        parts.append(f"영상: {site} ({', '.join(u for u in users if u)})")
     return "\n\n".join(parts)  # 고지 문구는 연결부(upload_video)가 끝에 붙인다
 
 
@@ -151,7 +156,7 @@ class UploadStep:
         else:
             title = (f"{info['title']} {info['number']}화: {info['episodeTitle']}" if info
                      else (script.get("titleCandidates") or [job["topic"]])[0])
-            res = yt.upload_video(video, title=title, description=_description(script, playlist_id), disclosure=disclosure,
+            res = yt.upload_video(video, title=title, description=_description(script, playlist_id, visuals.get("credits")), disclosure=disclosure,
                                   category_id=str(ycfg.get("category_id", "28")),
                                   tags=[h.lstrip("#") for h in script.get("hashtags", [])], synthetic=synthetic)
             video_id, replaces = res["id"], prev_video

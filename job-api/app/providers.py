@@ -15,6 +15,7 @@ from app.llm.openai_compatible import OpenAiCompatible
 
 LLM_KINDS = {"openai-compatible", "claude-api"}
 TTS_KINDS = {"http-worker"}
+STOCK_ENGINES = {"none", "pixabay"}  # 스톡 영상 (2026-10-17). 키 파일은 visuals 단계가 쓸 때 읽는다(없으면 그 영상만 도식)
 CLIP_ENGINES = {"none", "runway", "higgsfield", "seedance"}  # 생성기 구현은 Phase 2 (기획서 F16~F18)
 
 
@@ -43,6 +44,11 @@ class ProviderRegistry:
     def chars_per_sec(self) -> float:
         """선택된 TTS 의 초당 글자 수(공백 제외). 대본 목표 글자 수 계산에 쓴다 (앱 설계 "길이 맞추기")"""
         return float(self.tts_settings()["chars_per_sec"])
+
+    @property
+    def stock(self) -> dict[str, Any]:
+        """스톡 영상 공급원 (video.stock). engine: none | pixabay"""
+        return dict(self.config.get("video", {}).get("stock") or {"engine": "none"})
 
     @property
     def clip_engine(self) -> str:
@@ -86,6 +92,9 @@ def load_providers(path: Path) -> ProviderRegistry:
         raise ProviderError(f"tts: 모르는 kind {tp.get('kind')}")
     if not isinstance(tp.get("chars_per_sec"), (int, float)) or tp["chars_per_sec"] <= 0:
         raise ProviderError("tts: chars_per_sec(초당 글자 수, 0주 차 실측 Supertonic 5.6) 가 필요하다")
+    stock = ((cfg.get("video") or {}).get("stock") or {}).get("engine", "none")
+    if stock not in STOCK_ENGINES:
+        raise ProviderError(f"video.stock.engine: 모르는 값 {stock}")
     clip = (cfg.get("video") or {}).get("clip_engine", "none")
     if clip not in CLIP_ENGINES:
         raise ProviderError(f"video.clip_engine: 모르는 값 {clip}")

@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+from app.core.category import load_category
 from app.domain.series import story_for
 
 from .base import StepContext
@@ -29,7 +30,7 @@ class TopicStep:
             "videoEngine": "remotion",
             "resolution": {"width": 1080, "height": 1920},
             "fps": 30,
-            "theme": "default",
+            "theme": str(load_category(ctx.settings, job["category"]).get("theme") or "default"),  # 화면 스타일 (카테고리)
             "publish": {"platform": "youtube", "visibility": "private"},
             "category": job["category"],
             "series": series,

@@ -12,11 +12,14 @@ from typing import Any, Callable, Optional
 import httpx
 
 from app.core.category import load_category
+from app.llm.prompting import render_messages
 from app.media.ffmpeg import normalize_loudness
+from app.stock.pixabay import Pixabay, StockError
 from app.pipeline.timeline_calc import compute_timeline
 from app.text.pronunciation import apply_pronunciation, load_dictionary
 
 from .base import StepContext, StepFailure
+from .llm_common import ask
 
 
 def _post(url: str, body: dict, timeout: float, what: str, retry_from_on_422: str | None = None) -> dict:
@@ -89,21 +92,77 @@ class TimelineStep:
         ctx.write_json("timeline.json", t)
 
 
+QUERY_SCHEMA = {"type": "object", "properties": {"queries": {"type": "array", "items": {
+    "type": "object", "properties": {"scene": {"type": "string"}, "query": {"type": "string"}},
+    "required": ["scene", "query"], "additionalProperties": False}}}, "required": ["queries"], "additionalProperties": False}
+
+
 class VisualsStep:
-    """생성 클립 장면만 처리한다 (D18). 시범 운영은 clip_engine none 이라 템플릿 그대로 통과한다"""
+    """생성 클립(D18, Phase 2)과 스톡 영상(2026-10-17)을 처리한다.
+
+    레터박스 스타일이고 providers.yaml 의 video.stock.engine 이 pixabay 면, LLM 이 장면마다 영어 검색어를 정하고
+    Pixabay 에서 영상을 받아 clips/<장면>.mp4 로 둔다. 실패한 장면은 템플릿(도식)으로 두고 영상은 계속 만든다(degraded).
+    """
 
     name = "visuals"
-    inputs = ["timeline.json"]
+    inputs = ["timeline.json", "scenes.json"]
     outputs = ["visuals.json"]
+
+    def __init__(self, stock_factory: Optional[Callable[..., Any]] = None):
+        self._stock_factory = stock_factory or Pixabay.from_settings
 
     def run(self, ctx: StepContext) -> None:
         engine = getattr(ctx.providers, "clip_engine", "none") if ctx.providers else "none"
         t = ctx.read_json("timeline.json")
         if engine != "none" and any(s["visual"]["type"] == "clip" for s in t["scenes"]):
             raise StepFailure("deterministic", f"영상 생성기 {engine} 는 아직 구현되지 않았다 (Phase 2)")
-        ctx.write_json("visuals.json", {"clipEngine": engine,
-                                        "scenes": [{"id": s["id"], "source": s["visual"]["type"]} for s in t["scenes"]],
-                                        "costUsd": 0})
+        scenes = [{"id": s["id"], "source": s["visual"]["type"]} for s in t["scenes"]]
+        stock_cfg = (getattr(ctx.providers, "stock", None) or {}) if ctx.providers else {}
+        credits: list[dict[str, str]] = []
+        if t.get("theme") == "letterbox" and stock_cfg.get("engine") == "pixabay":
+            credits = self._stock(ctx, t, scenes, stock_cfg)
+        ctx.write_json("visuals.json", {"clipEngine": engine, "stockEngine": stock_cfg.get("engine", "none"),
+                                        "scenes": scenes, "credits": credits, "costUsd": 0})
+
+    def _stock(self, ctx: StepContext, t: dict, scenes: list[dict], cfg: dict) -> list[dict[str, str]]:
+        lines = {s["id"]: s for s in ctx.read_json("scenes.json")["scenes"]}
+        listing = "\n".join(f"- {s['id']} ({lines.get(s['id'], {}).get('visual', {}).get('component', '')}): "
+                             f"{' '.join(lines.get(s['id'], {}).get('lines', []))}" for s in t["scenes"])
+        messages, _ = render_messages("visual_queries", scenes=listing, max_count=int(cfg.get("max_per_video", 6)))
+        try:
+            out = ask(ctx, messages, QUERY_SCHEMA, "visual_queries",
+                      lambda d: [] if isinstance(d, dict) and isinstance(d.get("queries"), list) else ["queries 배열이 필요하다"])
+            queries = {q["scene"]: q["query"].strip() for q in out.data.get("queries", []) if q.get("query", "").strip()}
+        except StepFailure as e:
+            ctx.note_degraded(f"스톡 검색어를 정하지 못해 도식으로: {e.message[:200]}")
+            return []
+        try:
+            stock = self._stock_factory(ctx.settings, cfg)
+        except StockError as e:
+            ctx.note_degraded(f"스톡 공급원을 쓸 수 없어 도식으로: {e.message}")
+            return []
+        credits, used = [], 0
+        for scene, src in zip(t["scenes"], scenes):
+            q = queries.get(scene["id"])
+            if not q or used >= int(cfg.get("max_per_video", 6)):
+                continue
+            seconds = round(scene["durationInFrames"] / t["fps"], 2)
+            try:
+                found = stock.search(q, seconds)
+                if not found:
+                    ctx.note_degraded(f"{scene['id']} '{q}' 검색 결과 없음, 도식으로")
+                    continue
+                clip = found[0]
+                stock.download(clip, ctx.job_dir / "clips" / f"{scene['id']}.mp4")
+            except StockError as e:
+                ctx.note_degraded(f"{scene['id']} 스톡 실패({e.kind}), 도식으로: {e.message}")
+                continue
+            used += 1
+            src.update({"source": "stock", "path": f"clips/{scene['id']}.mp4", "durationSec": clip.duration, "query": q,
+                        "credit": {"site": "Pixabay", "user": clip.user, "page": clip.page}})
+            if all(c["user"] != clip.user for c in credits):
+                credits.append({"site": "Pixabay", "user": clip.user, "page": clip.page})
+        return credits
 
 
 LOUDNESS_TARGET_LUFS = -14.0  # YouTube 가 큰 소리를 줄이는 기준으로 알려진 값 (공식 수치 미확인, 앱 설계 "품질 게이트")
@@ -119,17 +178,17 @@ class RenderStep:
     """
 
     name = "render"
-    inputs = ["timeline.json", "visuals.json", "tts"]
-    outputs = ["render/final.mp4"]
+    inputs = ["timeline.json", "visuals.json", "tts", "clips"]
+    outputs = ["render/final.mp4", "render.timeline.json"]
 
     def __init__(self, normalize: Optional[Callable[..., dict[str, Any]]] = None):
         self._normalize = normalize or normalize_loudness
 
     def run(self, ctx: StepContext) -> None:
         out = ctx.job_dir / "render" / "final.mp4"
-        res: dict[str, Any] = _post(ctx.settings.render_worker_url.rstrip("/") + "/render",
-                                    {"timeline": str(ctx.job_dir / "timeline.json"), "out": str(out)},
-                                    float(ctx.settings.render_timeout_sec), "render-worker", retry_from_on_422="scenes")
+        final = self._final_timeline(ctx)  # timeline 에 스톡 영상·위 제목을 더한 렌더 입력 (작업 폴더 맨 위: 상대 경로 기준)
+        ctx.write_json("render.timeline.json", final)
+        res = self._post_render(ctx, ctx.job_dir / "render.timeline.json", out)
         ctx.meta["render"] = res  # 렌더 시간·프레임 수는 step_run 기록용
         tmp = out.with_name(f"final.loudnorm-{ctx.attempt}.mp4")
         try:
@@ -142,3 +201,21 @@ class RenderStep:
         finally:
             if tmp.exists():
                 tmp.unlink()
+
+    def _post_render(self, ctx: StepContext, timeline_path, out) -> dict[str, Any]:
+        return _post(ctx.settings.render_worker_url.rstrip("/") + "/render", {"timeline": str(timeline_path), "out": str(out)},
+                     float(ctx.settings.render_timeout_sec), "render-worker", retry_from_on_422="scenes")
+
+    @staticmethod
+    def _final_timeline(ctx: StepContext) -> dict[str, Any]:
+        t = ctx.read_json("timeline.json")
+        job = ctx.read_json("job.json")
+        visuals = ctx.read_json("visuals.json") if ctx.path("visuals.json").is_file() else {"scenes": []}
+        media = {s["id"]: s for s in visuals.get("scenes", []) if s.get("source") == "stock"}
+        for scene in t["scenes"]:
+            m = media.get(scene["id"])
+            if m:
+                scene["media"] = {"type": "video", "src": m["path"], "durationInFrames": max(1, int(m["durationSec"] * t["fps"]))}
+        cat = load_category(ctx.settings, job["category"])
+        t["header"] = {"brand": str(cat.get("brand") or "MiniBatch"), "title": job["topic"]}
+        return t

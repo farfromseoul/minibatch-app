@@ -12,6 +12,8 @@ export type TimelineScene = {
   durationInFrames: number;
   visual: TemplateVisual;
   animationPreset: AnimationPreset;
+  /** 레터박스 가운데 판에 깔 스톡 영상 (작업 폴더 기준 경로, 영상 길이 프레임). 없으면 도식 */
+  media?: { type: "video"; src: string; durationInFrames: number };
 };
 
 export type Timeline = {
@@ -21,6 +23,8 @@ export type Timeline = {
   height: number;
   durationInFrames: number;
   theme: string;
+  /** 화면 위 고정 글자 (letterbox 스타일). 없으면 첫 TitleReveal 제목 */
+  header?: { brand?: string; title?: string };
   scenes: TimelineScene[];
   audio: { src: string; fromFrame: number }[];
   captions: { text: string; fromFrame: number; toFrame: number }[];
@@ -102,6 +106,12 @@ export function validateTimeline(t: unknown): string[] {
     if (!isInt(s?.durationInFrames) || s.durationInFrames <= 0) e.push(`${where}: durationInFrames 는 양의 정수`);
     expected = (isInt(s?.fromFrame) ? s.fromFrame : expected) + (isInt(s?.durationInFrames) ? s.durationInFrames : 0);
     if (!PRESETS.includes(s?.animationPreset)) e.push(`${where}: animationPreset 은 ${PRESETS.join("|")}`);
+    if (s?.media !== undefined) {
+      const m = s.media;
+      if (!isObj(m) || m.type !== "video" || !isSafeRelative(m.src) || !isInt(m.durationInFrames) || m.durationInFrames <= 0) {
+        e.push(`${where}: media 는 {type: video, src: 작업 폴더 안 경로, durationInFrames: 양의 정수}`);
+      }
+    }
     const v = s?.visual;
     if (!isObj(v) || v.type !== "template") {
       e.push(`${where}: visual.type 은 template (생성 클립은 Phase 2)`);
@@ -130,5 +140,8 @@ export function validateTimeline(t: unknown): string[] {
     lastEnd = c.toFrame;
   }
   if (t.bgm !== null && t.bgm !== undefined) e.push("bgm 은 아직 지원하지 않는다 (null)");
+  if (t.header !== undefined && (!isObj(t.header) || ["brand", "title"].some((k) => t.header[k] !== undefined && !isStr(t.header[k])))) {
+    e.push("header 는 {brand?, title?} 문자열");
+  }
   return e;
 }

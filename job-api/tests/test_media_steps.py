@@ -259,7 +259,7 @@ class VisualsAndRenderTest(MediaCase):
         self.assertTrue((self.job_dir(job_id) / "render" / "final.mp4").is_file())
         path, body = FakeWorker.received[-1]
         self.assertEqual(path, "/render")
-        self.assertEqual(body["timeline"], str(self.job_dir(job_id) / "timeline.json"))
+        self.assertEqual(body["timeline"], str(self.job_dir(job_id) / "render.timeline.json"))  # timeline + 스톡 영상·위 제목 (2026-10-17)
         self.assertEqual(body["out"], str(self.job_dir(job_id) / "render" / "final.mp4"))
 
     def test_render_normalizes_loudness_in_place(self):

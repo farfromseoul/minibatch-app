@@ -238,6 +238,16 @@ class UploadTest(PublishCase):
 
         self.assertFalse(self.yt.named("upload_video")[0]["synthetic"])  # 템플릿만이면 의무 아님 (앱 설계 규칙 표)
 
+    def test_stock_credits_go_to_description(self):
+        self.steps["visuals"].files["visuals.json"] = lambda: {"clipEngine": "none", "scenes": [{"id": "s01", "source": "stock"}],
+                                                               "credits": [{"site": "Pixabay", "user": "kim", "page": "p1"},
+                                                                           {"site": "Pixabay", "user": "lee", "page": "p2"}]}
+        job_id = self.new_job()
+
+        self.run_until(job_id, "upload")
+
+        self.assertIn("영상: Pixabay (kim, lee)", self.yt.named("upload_video")[0]["description"])
+
     def test_clip_scene_marks_synthetic(self):
         self.clip = True
         job_id = self.new_job()
