@@ -5,8 +5,7 @@ import pathlib
 import re
 import uuid
 
-OUT = pathlib.Path(__file__).parent / "out"
-OUT.mkdir(exist_ok=True)
+OUT = pathlib.Path(__file__).parent  # 저장소 workflows/ 에 바로 쓴다
 DECIDE = (pathlib.Path(__file__).parent / "decide.mjs").read_text(encoding="utf-8").replace("export function", "function")
 
 API = {"httpHeaderAuth": {"id": "mbJobApi0000001", "name": "MiniBatch job-api"}}
@@ -303,6 +302,72 @@ tg = telegram(w, "알림: 상태", "={{ $json.text }}", [880, 0])
 for a, b in [(t1, cfg), (cfg, hz), (hz, judge), (judge, tg)]:
     w.link(a, b)
 w.save("minibatch-4-health.json")
+
+
+# ---------------------------------------------------------------- 5. 취소 폼 (D29, 2026-10-17)
+w = WF("MiniBatch 5 취소 폼")
+ft = w.add("취소 폼", "n8n-nodes-base.formTrigger", 2.3,
+           {"path": "minibatch-cancel", "formTitle": "MiniBatch 취소",
+            "formDescription": "공개 전 작업과 진행 중 시리즈를 취소합니다. 취소한 작업은 다시 실행되지 않고, 이미 올린 비공개 영상은 그대로 남습니다.",
+            "formFields": {"values": [{"fieldLabel": "승인자", "placeholder": "운영자", "requiredField": True}]},
+            "options": {"buttonLabel": "목록 열기", "appendAttribution": False}},
+           [0, 0], webhookId=str(uuid.uuid5(uuid.NAMESPACE_URL, "minibatch/minibatch-cancel")))
+cfg = code(w, "설정", CONFIG_JS, [220, 0])
+jl = http(w, "작업 목록", "GET", "={{ $('설정').first().json.api }}/jobs", [440, 0])
+sl = http(w, "시리즈 목록", "GET", "={{ $('설정').first().json.api }}/series", [660, 0])
+mk = code(w, "폼 만들기", """// 공개 전 작업(D29 취소 가능 상태)과 끝나지 않은 시리즈를 보여 준다
+const esc = s => String(s ?? '').replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+const JOB_OK = ['PENDING', 'RUNNING', 'WAITING', 'FAILED', 'REVIEW', 'REJECTED'];
+const SERIES_OK = ['PROPOSED', 'APPROVED', 'ACTIVE', 'PAUSED'];
+const jobs = ($('작업 목록').first().json.items || []).filter(j => JOB_OK.includes(j.status));
+const series = ($input.first().json.items || []).filter(s => SERIES_OK.includes(s.status));
+if (!jobs.length && !series.length) return [{ json: { empty: true, fields: [] } }];
+const fields = [];
+const opts = { values: [{ option: '유지' }, { option: '취소' }] };
+if (series.length) fields.push({ fieldType: 'html', fieldName: 'h_series', html: '<h3>시리즈</h3><p>시리즈를 취소하면 공개 전 화와 작업도 함께 취소됩니다.</p>' });
+for (const s of series) {
+  fields.push({ fieldType: 'dropdown', fieldName: `s__${s.id}`, fieldLabel: `${s.title} (${s.status}, 남은 화 ${s.counts?.planned ?? '?'})`, fieldOptions: opts, requiredField: true });
+}
+if (jobs.length) fields.push({ fieldType: 'html', fieldName: 'h_jobs', html: '<h3>작업 (공개 전)</h3><p>시리즈 화를 취소하면 그 시리즈는 멈춤(PAUSED)이 됩니다.</p>' });
+for (const j of jobs) {
+  const head = j.seriesId ? `${esc(j.seriesId)} ${j.episodeNumber}화` : '단독';
+  fields.push({ fieldType: 'dropdown', fieldName: `j__${j.id}`, fieldLabel: `${head}: ${j.topic} (${j.status}${j.currentStep ? ', ' + j.currentStep : ''})`, fieldOptions: opts, requiredField: true });
+}
+fields.push({ fieldType: 'text', fieldName: 'reason', fieldLabel: '취소 사유', requiredField: true });
+return [{ json: { empty: false, fields } }];""", [880, 0])
+sw = switch(w, "취소할 것 있나", "={{ $json.empty ? 1 : 0 }}", 2, [1100, 0])
+pg = form_page(w, "취소 화면", "MiniBatch 취소", "취소할 항목만 '취소'로 바꾸고 사유를 적어 제출합니다.", [1320, -100])
+none = form_done(w, "끝: 취소할 것 없음", "취소할 것이 없습니다", "공개 전 작업이나 진행 중 시리즈가 없습니다.", [1320, 160])
+plan = code(w, "취소 목록", """// 시리즈를 먼저 취소한다 (그 시리즈의 작업은 함께 취소된다). 남은 작업은 하나씩
+const by = $('취소 화면').first().json;
+const who = $('취소 폼').first().json['승인자'] || '운영자';
+const body = { cancelledBy: who, reason: by.reason || '사유 없음' };
+const out = [];
+for (const [k, v] of Object.entries(by)) if (k.startsWith('s__') && v === '취소') out.push({ json: { path: `series/${k.slice(3)}/cancel`, label: k.slice(3), body } });
+for (const [k, v] of Object.entries(by)) if (k.startsWith('j__') && v === '취소') out.push({ json: { path: `jobs/${k.slice(3)}/cancel`, label: k.slice(3), body } });
+return out.length ? out : [{ json: { path: null } }];""", [1540, -100])
+sw2 = switch(w, "취소할 것 골랐나", "={{ $json.path ? 0 : 1 }}", 2, [1760, -100])
+loop = w.add("하나씩", "n8n-nodes-base.splitInBatches", 3, {"batchSize": 1, "options": {}}, [1980, -200])
+do = http(w, "취소 요청", "POST", "={{ $('설정').first().json.api }}/{{ $json.path }}", [2200, -120],
+          body="={{ JSON.stringify($json.body) }}", full=True)
+res = code(w, "결과 정리", """// 시리즈를 먼저 취소하면 그 시리즈 작업은 이미 취소돼 409(not_cancellable)가 날 수 있다: 이미 취소됨으로 본다
+const req = $('취소 목록').all().map(i => i.json);
+const res = $input.all().map(i => i.json);
+const lines = req.map((r, i) => {
+  const x = res[i] || {};
+  if (x.statusCode === 200) return `${r.label} → ${x.body?.status}`;
+  if (x.body?.error?.code === 'not_cancellable') return `${r.label} → 이미 취소·공개됨 (${x.body.error.message})`;
+  return `${r.label} → 실패: ${x.body?.error?.message || x.statusCode}`;
+});
+return [{ json: { message: lines.join('\\n') } }];""", [2200, -320])
+done = form_done(w, "끝: 결과", "처리했습니다", "={{ $json.message }}", [2420, -320])
+nothing = form_done(w, "끝: 바꾼 것 없음", "바꾼 것이 없습니다", "모두 유지했습니다.", [1980, 60])
+for a, b in [(ft, cfg), (cfg, jl), (jl, sl), (sl, mk), (mk, sw), (pg, plan), (plan, sw2), (do, loop), (res, done)]:
+    w.link(a, b)
+w.link(sw, pg, 0); w.link(sw, none, 1)
+w.link(sw2, loop, 0); w.link(sw2, nothing, 1)
+w.link(loop, res, 0); w.link(loop, do, 1)
+w.save("minibatch-5-cancel-form.json")
 
 # 노드 이름이 연결과 맞는지 확인
 for f in sorted(OUT.glob("*.json")):

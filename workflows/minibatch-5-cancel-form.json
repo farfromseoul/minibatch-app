@@ -1,0 +1,465 @@
+{
+  "name": "MiniBatch 5 취소 폼",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "minibatch-cancel",
+        "formTitle": "MiniBatch 취소",
+        "formDescription": "공개 전 작업과 진행 중 시리즈를 취소합니다. 취소한 작업은 다시 실행되지 않고, 이미 올린 비공개 영상은 그대로 남습니다.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "승인자",
+              "placeholder": "운영자",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {
+          "buttonLabel": "목록 열기",
+          "appendAttribution": false
+        }
+      },
+      "id": "f75ab871-3633-5ddf-be6b-54885a841ece",
+      "name": "취소 폼",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.3,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "4a42c252-c206-5e34-8451-783321e4484e"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 설정: 여기 한 곳만 고친다. 텔레그램 chat id 는 비밀 값이 아니다 (봇 토큰은 자격 증명 'MiniBatch 텔레그램' 에)\nreturn [{ json: {\n  api: 'http://job-api:8080',                 // compose 안의 job-api 주소\n  chatId: 'CHAT_ID_를_여기에',                 // 25번 ③에서 확인한 내 chat id (숫자)\n  formBase: 'http://localhost:5678/form',     // 승인 폼 주소 (이 MacBook 브라우저에서 연다)\n  category: 'ai-it',\n} }];"
+      },
+      "id": "650b20df-84bf-54bf-aef1-b3b070270d55",
+      "name": "설정",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('설정').first().json.api }}/jobs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "9a2dfd51-714d-57b0-bf4a-0d4b2d958834",
+      "name": "작업 목록",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mbJobApi0000001",
+          "name": "MiniBatch job-api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('설정').first().json.api }}/series",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "2c34bf45-2de5-54f5-8dcb-f69991963a86",
+      "name": "시리즈 목록",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mbJobApi0000001",
+          "name": "MiniBatch job-api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 공개 전 작업(D29 취소 가능 상태)과 끝나지 않은 시리즈를 보여 준다\nconst esc = s => String(s ?? '').replace(/[<>&\"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '\"': '&quot;' }[c]));\nconst JOB_OK = ['PENDING', 'RUNNING', 'WAITING', 'FAILED', 'REVIEW', 'REJECTED'];\nconst SERIES_OK = ['PROPOSED', 'APPROVED', 'ACTIVE', 'PAUSED'];\nconst jobs = ($('작업 목록').first().json.items || []).filter(j => JOB_OK.includes(j.status));\nconst series = ($input.first().json.items || []).filter(s => SERIES_OK.includes(s.status));\nif (!jobs.length && !series.length) return [{ json: { empty: true, fields: [] } }];\nconst fields = [];\nconst opts = { values: [{ option: '유지' }, { option: '취소' }] };\nif (series.length) fields.push({ fieldType: 'html', fieldName: 'h_series', html: '<h3>시리즈</h3><p>시리즈를 취소하면 공개 전 화와 작업도 함께 취소됩니다.</p>' });\nfor (const s of series) {\n  fields.push({ fieldType: 'dropdown', fieldName: `s__${s.id}`, fieldLabel: `${s.title} (${s.status}, 남은 화 ${s.counts?.planned ?? '?'})`, fieldOptions: opts, requiredField: true });\n}\nif (jobs.length) fields.push({ fieldType: 'html', fieldName: 'h_jobs', html: '<h3>작업 (공개 전)</h3><p>시리즈 화를 취소하면 그 시리즈는 멈춤(PAUSED)이 됩니다.</p>' });\nfor (const j of jobs) {\n  const head = j.seriesId ? `${esc(j.seriesId)} ${j.episodeNumber}화` : '단독';\n  fields.push({ fieldType: 'dropdown', fieldName: `j__${j.id}`, fieldLabel: `${head}: ${j.topic} (${j.status}${j.currentStep ? ', ' + j.currentStep : ''})`, fieldOptions: opts, requiredField: true });\n}\nfields.push({ fieldType: 'text', fieldName: 'reason', fieldLabel: '취소 사유', requiredField: true });\nreturn [{ json: { empty: false, fields } }];"
+      },
+      "id": "8d3040c8-ebe1-5eb4-a9f4-86df79d1bce1",
+      "name": "폼 만들기",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.empty ? 1 : 0 }}"
+      },
+      "id": "dc34b208-6282-5564-8762-df47b82e8b59",
+      "name": "취소할 것 있나",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "page",
+        "defineForm": "json",
+        "jsonOutput": "={{ JSON.stringify($json.fields) }}",
+        "options": {
+          "formTitle": "MiniBatch 취소",
+          "formDescription": "취소할 항목만 '취소'로 바꾸고 사유를 적어 제출합니다.",
+          "buttonLabel": "제출"
+        }
+      },
+      "id": "96dc42f7-83ed-5a7b-a1d7-77392402d4fb",
+      "name": "취소 화면",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        1320,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "text",
+        "completionTitle": "취소할 것이 없습니다",
+        "completionMessage": "공개 전 작업이나 진행 중 시리즈가 없습니다.",
+        "options": {}
+      },
+      "id": "59ada916-6fcf-5795-9dbb-796025507255",
+      "name": "끝: 취소할 것 없음",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        1320,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 시리즈를 먼저 취소한다 (그 시리즈의 작업은 함께 취소된다). 남은 작업은 하나씩\nconst by = $('취소 화면').first().json;\nconst who = $('취소 폼').first().json['승인자'] || '운영자';\nconst body = { cancelledBy: who, reason: by.reason || '사유 없음' };\nconst out = [];\nfor (const [k, v] of Object.entries(by)) if (k.startsWith('s__') && v === '취소') out.push({ json: { path: `series/${k.slice(3)}/cancel`, label: k.slice(3), body } });\nfor (const [k, v] of Object.entries(by)) if (k.startsWith('j__') && v === '취소') out.push({ json: { path: `jobs/${k.slice(3)}/cancel`, label: k.slice(3), body } });\nreturn out.length ? out : [{ json: { path: null } }];"
+      },
+      "id": "4a543a21-ca5d-5939-9924-7766a1e4f262",
+      "name": "취소 목록",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.path ? 0 : 1 }}"
+      },
+      "id": "b2c9a29b-3238-519d-9c49-de72daecbdad",
+      "name": "취소할 것 골랐나",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1760,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "ca3e0ded-4b39-59df-bbbd-3f1fb18731ec",
+      "name": "하나씩",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1980,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('설정').first().json.api }}/{{ $json.path }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "ff63da23-22c1-5a34-95e6-35be96052eb9",
+      "name": "취소 요청",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        -120
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mbJobApi0000001",
+          "name": "MiniBatch job-api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 시리즈를 먼저 취소하면 그 시리즈 작업은 이미 취소돼 409(not_cancellable)가 날 수 있다: 이미 취소됨으로 본다\nconst req = $('취소 목록').all().map(i => i.json);\nconst res = $input.all().map(i => i.json);\nconst lines = req.map((r, i) => {\n  const x = res[i] || {};\n  if (x.statusCode === 200) return `${r.label} → ${x.body?.status}`;\n  if (x.body?.error?.code === 'not_cancellable') return `${r.label} → 이미 취소·공개됨 (${x.body.error.message})`;\n  return `${r.label} → 실패: ${x.body?.error?.message || x.statusCode}`;\n});\nreturn [{ json: { message: lines.join('\\n') } }];"
+      },
+      "id": "278e2429-50ba-5f73-9037-65863ca15f7b",
+      "name": "결과 정리",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "text",
+        "completionTitle": "처리했습니다",
+        "completionMessage": "={{ $json.message }}",
+        "options": {}
+      },
+      "id": "556a3933-635f-55f6-b321-e14fec13bb88",
+      "name": "끝: 결과",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        2420,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "text",
+        "completionTitle": "바꾼 것이 없습니다",
+        "completionMessage": "모두 유지했습니다.",
+        "options": {}
+      },
+      "id": "7c8c417b-9fb7-533c-bc6b-cf1eb47fcf5b",
+      "name": "끝: 바꾼 것 없음",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        1980,
+        60
+      ]
+    }
+  ],
+  "connections": {
+    "취소 폼": {
+      "main": [
+        [
+          {
+            "node": "설정",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "설정": {
+      "main": [
+        [
+          {
+            "node": "작업 목록",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "작업 목록": {
+      "main": [
+        [
+          {
+            "node": "시리즈 목록",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "시리즈 목록": {
+      "main": [
+        [
+          {
+            "node": "폼 만들기",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "폼 만들기": {
+      "main": [
+        [
+          {
+            "node": "취소할 것 있나",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "취소 화면": {
+      "main": [
+        [
+          {
+            "node": "취소 목록",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "취소 목록": {
+      "main": [
+        [
+          {
+            "node": "취소할 것 골랐나",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "취소 요청": {
+      "main": [
+        [
+          {
+            "node": "하나씩",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "결과 정리": {
+      "main": [
+        [
+          {
+            "node": "끝: 결과",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "취소할 것 있나": {
+      "main": [
+        [
+          {
+            "node": "취소 화면",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "끝: 취소할 것 없음",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "취소할 것 골랐나": {
+      "main": [
+        [
+          {
+            "node": "하나씩",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "끝: 바꾼 것 없음",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "하나씩": {
+      "main": [
+        [
+          {
+            "node": "결과 정리",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "취소 요청",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Seoul",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": [],
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
