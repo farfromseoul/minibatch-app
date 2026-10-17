@@ -42,6 +42,10 @@ class FakeRegistry:
                 "sample_rate": 44100, "chars_per_sec": self.chars_per_sec, "timeout_sec": 30}
 
 
+# 검토 응답의 점수 (2026-10-17 검토 기준). 2점 이하가 있으면 대본부터 다시
+GOOD_SCORES = {"accuracy": 5, "clarity": 4, "concreteness": 4, "naturalness": 4}
+
+
 def transient(msg="LM Studio 응답 없음"):
     return LlmError("transient", msg)
 

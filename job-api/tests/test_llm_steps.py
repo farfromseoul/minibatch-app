@@ -7,7 +7,7 @@ import pathlib
 import shutil
 
 from app.llm.base import LlmError
-from tests.fakes import FakeLlm, FakeRegistry, script_of, transient
+from tests.fakes import GOOD_SCORES, FakeLlm, FakeRegistry, script_of, transient
 from tests.helpers import AppTestCase
 
 REAL_CATEGORY = pathlib.Path(__file__).resolve().parents[1] / "content" / "categories" / "ai-it.yaml"
@@ -58,9 +58,9 @@ class ScriptStepTest(LlmStepCase):
 
         self.job_until("script")
 
-        prompt = self.llm.requests[0]["messages"][-1]["content"]
+        prompt = "\n".join(m["content"] for m in self.llm.requests[0]["messages"])  # system(규칙) + user(주제·분량)
         self.assertIn("RAG란?", prompt)
-        self.assertIn("비전공 개발 입문자", prompt)  # 카테고리 audience
+        self.assertIn("원리는 모르는 직장인·학생", prompt)  # 카테고리 audience
         self.assertIn(str(TARGET), prompt)
         self.assertIn("40자", prompt)
 
@@ -168,7 +168,7 @@ class ReviewStepTest(LlmStepCase):
     def test_pass_with_rule_warnings(self):
         script = script_of(38, 8)
         script["body"][0] = "2017년에 나온 기술은 100% 정확합니다 가가가가가가가가가가가가가가."
-        self.llm.responses = [script, {"issues": [{"line": 2, "severity": "warning", "reason": "모호"}], "verdict": "pass"}]
+        self.llm.responses = [script, {"issues": [{"line": 2, "severity": "warning", "reason": "모호"}], "scores": GOOD_SCORES, "verdict": "pass"}]
 
         job_id = self.job_until("review")
 
@@ -178,7 +178,7 @@ class ReviewStepTest(LlmStepCase):
         self.assertEqual(r["verdict"], "pass")
 
     def test_critical_issue_fails_with_retry_from_script(self):
-        self.llm.responses = [script_of(38, 8), {"issues": [{"line": 3, "severity": "critical", "reason": "RAG를 학습 방식으로 설명"}], "verdict": "fail"}]
+        self.llm.responses = [script_of(38, 8), {"issues": [{"line": 3, "severity": "critical", "reason": "RAG를 학습 방식으로 설명"}], "scores": GOOD_SCORES, "verdict": "fail"}]
 
         job_id = self.new_job()
         for step in ("topic", "script", "review"):
@@ -206,7 +206,7 @@ class ScenesStepTest(LlmStepCase):
 
     def test_writes_scenes_json(self):
         script = script_of(38, 8)
-        self.llm.responses = [script, {"issues": [], "verdict": "pass"}, self.good_scenes(script)]
+        self.llm.responses = [script, {"issues": [], "scores": GOOD_SCORES, "verdict": "pass"}, self.good_scenes(script)]
 
         job_id = self.job_until("scenes")
 
@@ -223,7 +223,7 @@ class ScenesStepTest(LlmStepCase):
         script = script_of(38, 8)
         bad = self.good_scenes(script)
         bad["scenes"][1]["sentences"] = [4, 3, 2]
-        self.llm.responses = [script, {"issues": [], "verdict": "pass"}, bad, self.good_scenes(script)]
+        self.llm.responses = [script, {"issues": [], "scores": GOOD_SCORES, "verdict": "pass"}, bad, self.good_scenes(script)]
 
         job_id = self.job_until("scenes")
 
@@ -236,7 +236,7 @@ class ScenesStepTest(LlmStepCase):
         flow = bad["scenes"][1]
         bad["scenes"][2] = dict(flow, sentences=[5, 6])
         bad["scenes"].insert(3, dict(flow, sentences=[7]))
-        self.llm.responses = [script, {"issues": [], "verdict": "pass"}, bad, self.good_scenes(script)]
+        self.llm.responses = [script, {"issues": [], "scores": GOOD_SCORES, "verdict": "pass"}, bad, self.good_scenes(script)]
 
         self.job_until("scenes")
 
@@ -246,7 +246,7 @@ class ScenesStepTest(LlmStepCase):
         script = script_of(38, 8)
         bad = self.good_scenes(script)
         bad["scenes"][1]["props"]["edges"] = [["q", "없는노드"]]
-        self.llm.responses = [script, {"issues": [], "verdict": "pass"}, bad, bad, bad]
+        self.llm.responses = [script, {"issues": [], "scores": GOOD_SCORES, "verdict": "pass"}, bad, bad, bad]
 
         job_id = self.new_job()
         for step in ("topic", "script", "review", "scenes"):
@@ -290,7 +290,7 @@ series:
         self.post("/series", self.PLAN)
         job = self.post("/jobs", {"seriesId": "ai-office"}).json()["id"]
         script = script_of(33, 8, episodeSummary="민지가 AI 뜻을 배움", nextTeaser="다음엔 데이터로 배우는 법!")  # 264+예고 12 = 276자: 끝 문장 몫을 뺀 목표 안
-        self.llm.responses = [script, {"issues": [], "verdict": "pass"}, self.scenes_for(script)]
+        self.llm.responses = [script, {"issues": [], "scores": GOOD_SCORES, "verdict": "pass"}, self.scenes_for(script)]
         self.run_until(job, "scenes")
         return job
 
@@ -322,7 +322,7 @@ series:
         self.post(f"/jobs/{job1}/approve", {"approvedBy": "운영자"})
         job2 = self.post("/jobs", {"seriesId": "ai-office"}).json()["id"]
         script = script_of(33, 8, recap="지난 이야기: 민지는 AI 뜻을 배웠다.", episodeSummary="머신러닝을 배움")
-        self.llm.responses = [script, {"issues": [], "verdict": "pass"}, self.scenes_for(script)]
+        self.llm.responses = [script, {"issues": [], "scores": GOOD_SCORES, "verdict": "pass"}, self.scenes_for(script)]
 
         self.run_until(job2, "scenes")
 
@@ -332,7 +332,7 @@ series:
 
     def test_standalone_video_has_no_outro(self):
         script = script_of(38, 8)
-        self.llm.responses = [script, {"issues": [], "verdict": "pass"}, self.scenes_for(script)]
+        self.llm.responses = [script, {"issues": [], "scores": GOOD_SCORES, "verdict": "pass"}, self.scenes_for(script)]
 
         job = self.job_until("scenes")
 

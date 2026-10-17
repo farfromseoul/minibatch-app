@@ -233,8 +233,8 @@ class Runner:
             run.status, run.kind, run.error = "failed", kind, message[:2000]
             run.retry_from, run.retry_at, run.finished_at = retry_from, retry_at, now
             job = s.get(Job, ctx.job_id)
-            if job.status == "REJECTED":
-                pass  # 도는 사이 반려됐다. 상태는 그대로 두고 시도 기록만 남긴다
+            if job.status in ("REJECTED", "CANCELLED"):
+                pass  # 도는 사이 반려·취소됐다. 상태는 그대로 두고 시도 기록만 남긴다
             elif kind == "deterministic":
                 set_status(s, job, "FAILED", now, reason=message[:500])
             elif kind == "quota":

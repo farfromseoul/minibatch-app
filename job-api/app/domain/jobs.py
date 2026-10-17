@@ -16,7 +16,7 @@ from app.db.models import Episode, Job, JobEvent, Series, Topic
 
 from .text import normalize_topic
 
-INACTIVE = ("FAILED", "REJECTED")  # 중복 검사에서 빼는 상태
+INACTIVE = ("FAILED", "REJECTED", "CANCELLED")  # 중복 검사에서 빼는 상태
 PRODUCED = ("REVIEW", "APPROVED", "SCHEDULED", "PUBLISHED")  # 다 만들어진 작업 (다음 화를 미리 만들어도 되는 앞 화)
 
 
@@ -60,6 +60,8 @@ def _next_episode(s: Session, series: Series) -> Episode:
         raise ApiError(409, "series_paused", "앞 화가 반려돼 시리즈가 멈춰 있다. resume 후 다시 만든다")
     if series.status == "DONE":
         raise ApiError(409, "series_done", "시리즈의 모든 화를 만들었다")
+    if series.status == "CANCELLED":
+        raise ApiError(409, "series_cancelled", "취소된 시리즈다 (D29)")
     if series.status not in ("APPROVED", "ACTIVE"):
         raise ApiError(409, "series_not_approved", "승인되지 않은 시리즈 계획이다")
     ep = s.scalar(select(Episode).where(Episode.series_id == series.id, Episode.status == "PLANNED")

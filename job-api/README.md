@@ -54,6 +54,8 @@ tests/                  # 단위 테스트 (unittest)
 | POST·GET | `/jobs/{id}/steps/{step}` | 단계 실행 / 상태 |
 | POST | `/jobs/{id}/reset?from=<단계>` | 되돌리기 |
 | POST | `/jobs/{id}/approve` `{approvedBy, publishAt?}`, `/reject` `{rejectedBy, reason}` | REVIEW 에서만. 시리즈 화면 화·시리즈 상태도 바꾼다. 시리즈 N화는 N-1화가 승인된 뒤에만 승인(409 `previous_episode_not_approved`). N화를 반려하면 시리즈 PAUSED, 미리 만든 N+1화 이후는 REJECTED 로 정리(resume 하면 N화부터 다시). 승인은 영상이 올라가 있으면 바로 공개 전환(`publishAt`이 미래면 예약): 응답 `publish` = `{ok, status}` 또는 `{ok: false, kind, error}`(승인은 남고 APPROVED) |
+| POST | `/jobs/{id}/cancel` `{cancelledBy, reason}` | 공개 전 작업 취소 → CANCELLED (다시 실행 안 함, 올린 비공개 영상은 그대로). 시리즈 화면 화 CANCELLED·시리즈 PAUSED. 공개된 작업 409 `not_cancellable` (D29) |
+| POST | `/series/{id}/cancel` `{cancelledBy, reason}` | 시리즈 취소 → CANCELLED. 승인 안 된 화·공개 전 작업도 CANCELLED, 공개된 화는 그대로. 취소된 시리즈로 작업을 만들면 409 `series_cancelled` |
 | POST | `/jobs/{id}/publish` | APPROVED 작업의 공개 전환을 다시 한다. 시리즈 N화면 N-1화 설명란에 다음 화 링크(실패하면 `warnings`). 승인 기록 없음 409 `not_approved`, YouTube 실패 502 `youtube_<transient\|quota\|deterministic>` |
 | POST·GET | `/series`, `/series/{id}`, `/series/{id}/resume` | 사용자 작성 시리즈 등록(바로 APPROVED), 조회, 멈춘 시리즈 다시 진행 |
 | GET | `/series`, `/series?status=` | 시리즈 목록과 화 상태별 개수 `counts {total, planned, inProduction, approved, rejected}`. n8n 이 남은 화가 부족한지 본다 |

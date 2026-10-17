@@ -13,7 +13,7 @@ from app.core.timeutil import kst_date
 from app.db.models import Episode, Job, Series, Topic
 from app.llm.base import LlmEngine, LlmError
 from app.llm.converse import converse
-from app.llm.prompting import render
+from app.llm.prompting import render, render_messages
 
 from .series import KEY
 from .text import normalize_topic
@@ -28,9 +28,11 @@ def _category(settings, key: str) -> dict[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
-def _ask(llm: LlmEngine, prompt: str, schema: dict, name: str, check) -> Any:
+def _ask(llm: LlmEngine, prompt, schema: dict, name: str, check) -> Any:
+    """prompt 는 user 문자열 하나 또는 [system, user] 메시지 목록"""
+    messages = prompt if isinstance(prompt, list) else [{"role": "user", "content": prompt}]
     try:
-        out = converse(llm, [{"role": "user", "content": prompt}], schema, name, check)
+        out = converse(llm, messages, schema, name, check)
     except LlmError as e:  # transient
         raise ApiError(503, "llm_unavailable", e.message) from e
     if out.problems:
@@ -82,7 +84,7 @@ def generate_series_plan(s: Session, settings, now: datetime, llm: LlmEngine, *,
     if s.get(Series, key) is not None:
         raise ApiError(409, "series_exists", f"같은 key 의 시리즈가 있다: {key}")
     recent = list(s.scalars(select(Series.title).order_by(Series.created_at.desc()).limit(30)))
-    prompt, _ = render("series_plan", count=count, category_title=cat.get("title", category),
+    messages, _ = render_messages("series_plan", count=count, category_title=cat.get("title", category),
                        audience=cat.get("audience", ""),
                        title_line=f"'{title}'이라는" if title else "새",
                        title_rule="" if title else "- title: 시리즈 제목 한 줄. 아래 예전 시리즈와 주제·인물이 겹치지 않게\n",
@@ -90,11 +92,9 @@ def generate_series_plan(s: Session, settings, now: datetime, llm: LlmEngine, *,
                        given_bible=f"사용자가 정한 설정(그대로 쓴다): {json.dumps(bible, ensure_ascii=False)}" if bible else "")
     st = {"type": "string"}
     schema = {"type": "object", "properties": {
-        "bible": {"type": "object", "properties": {
-            "premise": st, "tone": st,
-            "characters": {"type": "array", "items": {"type": "object", "properties": {"name": st, "role": st},
-                                                      "required": ["name", "role"], "additionalProperties": False}}},
-                  "required": ["premise", "characters", "tone"], "additionalProperties": False},
+        # 2026-10-17: 가상 인물(characters)을 없앴다. 진행자 한 명의 연속 강의형 (오글거림·이해 방해)
+        "bible": {"type": "object", "properties": {"premise": st, "tone": st},
+                  "required": ["premise", "tone"], "additionalProperties": False},
         "episodes": {"type": "array", "items": {"type": "object", "properties": {"title": st, "outline": st},
                                                 "required": ["title", "outline"], "additionalProperties": False},
                      "minItems": count, "maxItems": count}},
@@ -114,7 +114,7 @@ def generate_series_plan(s: Session, settings, now: datetime, llm: LlmEngine, *,
             return ["시리즈 title 이 필요하다"]
         return []
 
-    data = _ask(llm, prompt, schema, "series_plan", check)
+    data = _ask(llm, messages, schema, "series_plan", check)
     series = Series(id=key, category=category, title=(title or str(data["title"]).strip())[:200], bible=bible or data["bible"], plan_source="llm",
                     status="PROPOSED", created_at=now, approved_at=None)
     s.add(series)

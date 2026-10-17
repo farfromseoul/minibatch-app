@@ -40,8 +40,8 @@ def create_user_series(s: Session, settings, now: datetime, *, key: str, categor
 def resume(s: Session, series: Series) -> None:
     if series.status != "PAUSED":
         raise ApiError(409, "series_not_paused", f"멈춘 시리즈만 다시 진행한다. 지금: {series.status}")
-    for ep in s.scalars(select(Episode).where(Episode.series_id == series.id, Episode.status == "REJECTED")):
-        ep.status = "PLANNED"  # 반려된 화를 다시 만든다
+    for ep in s.scalars(select(Episode).where(Episode.series_id == series.id, Episode.status.in_(("REJECTED", "CANCELLED")))):
+        ep.status = "PLANNED"  # 반려·취소된 화를 다시 만든다
         ep.job_id = None
     series.status = "ACTIVE"
 

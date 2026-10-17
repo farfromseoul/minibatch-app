@@ -15,7 +15,7 @@ from sqlalchemy import select, text
 from app.core.auth import require_token
 from app.core.errors import ApiError
 from app.db.models import Job, Series, Topic
-from app.domain import generation, review, series as series_domain, topics as topic_domain
+from app.domain import cancel as cancel_domain, generation, review, series as series_domain, topics as topic_domain
 from app.domain.jobs import create_job
 from app.publish import approve as publishing
 from app.youtube.client import YouTubeError
@@ -57,6 +57,11 @@ class ApproveBody(BaseModel):
 
 class RejectBody(BaseModel):
     rejectedBy: str = Field(min_length=1, max_length=100)
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class CancelBody(BaseModel):
+    cancelledBy: str = Field(min_length=1, max_length=100)
     reason: str = Field(min_length=1, max_length=2000)
 
 
@@ -284,6 +289,17 @@ def reject(job_id: str, body: RejectBody, request: Request) -> dict[str, Any]:
         return job_summary(job)
 
 
+@api.post("/jobs/{job_id}/cancel")
+def cancel_job(job_id: str, body: CancelBody, request: Request) -> dict[str, Any]:
+    """공개 전 작업 취소 (D29). 시리즈 화면 시리즈를 멈춘다"""
+    st = _st(request)
+    with st.db() as s:
+        job = _get_job(s, job_id)
+        cancel_domain.cancel_job(s, job, st.clock(), body.cancelledBy, body.reason)
+        s.commit()
+        return job_summary(job)
+
+
 # ---------- 시리즈 (D24)
 
 
@@ -344,6 +360,17 @@ def approve_series(series_id: str, body: ApproveSeriesBody, request: Request) ->
         generation.approve_series_plan(s, series, st.clock(),
                                        [e.model_dump() for e in body.episodes] if body.episodes is not None else None,
                                        body.bible)
+        s.commit()
+        return series_detail(s, series)
+
+
+@api.post("/series/{series_id}/cancel")
+def cancel_series(series_id: str, body: CancelBody, request: Request) -> dict[str, Any]:
+    """시리즈 취소 (D29). 공개 전 화·작업도 취소, 공개된 화는 그대로"""
+    st = _st(request)
+    with st.db() as s:
+        series = _get_series(s, series_id)
+        cancel_domain.cancel_series(s, series, st.clock(), body.cancelledBy, body.reason)
         s.commit()
         return series_detail(s, series)
 
