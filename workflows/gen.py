@@ -63,9 +63,13 @@ def http(wf, name, method, url, pos, body=None, auth=True, full=False, timeout=6
 
 
 def telegram(wf, name, text, pos):
+    # 텔레그램 노드는 parse_mode 를 비우면 Markdown(Legacy)로 보낸다. 오류 코드의 '_'(no_candidates 등)가 짝 없는 서식으로
+    # 읽혀 400 "can't parse entities" → 워크플로가 멈췄다 (2026-10-18). HTML 로 보내고 &·<·> 만 바꾼다
+    assert text.startswith("={{") and text.endswith("}}"), text
+    escaped = "={{ String(" + text[3:-2].strip() + ").replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }}"
     return wf.add(name, "n8n-nodes-base.telegram", 1.2,
-                  {"chatId": "={{ $('설정').first().json.chatId }}", "text": text,
-                   "additionalFields": {"appendAttribution": False}}, pos, TG)
+                  {"chatId": "={{ $('설정').first().json.chatId }}", "text": escaped,
+                   "additionalFields": {"appendAttribution": False, "parse_mode": "HTML"}}, pos, TG)
 
 
 def switch(wf, name, expr, n, pos):

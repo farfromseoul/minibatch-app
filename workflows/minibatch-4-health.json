@@ -74,9 +74,10 @@
     {
       "parameters": {
         "chatId": "={{ $('설정').first().json.chatId }}",
-        "text": "={{ $json.text }}",
+        "text": "={{ String($json.text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }}",
         "additionalFields": {
-          "appendAttribution": false
+          "appendAttribution": false,
+          "parse_mode": "HTML"
         }
       },
       "id": "347de0a1-07a0-5b2b-8363-6fca37370537",

@@ -187,9 +187,10 @@
     {
       "parameters": {
         "chatId": "={{ $('설정').first().json.chatId }}",
-        "text": "={{ $json.notify }}",
+        "text": "={{ String($json.notify).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }}",
         "additionalFields": {
-          "appendAttribution": false
+          "appendAttribution": false,
+          "parse_mode": "HTML"
         }
       },
       "id": "30d1c216-feb8-55b2-acf3-9b719b969d93",
@@ -304,9 +305,10 @@
     {
       "parameters": {
         "chatId": "={{ $('설정').first().json.chatId }}",
-        "text": "={{ `⚠️ MiniBatch 실패: ${$json.topic} (${$json.jobId})\\n${$json.message}` }}",
+        "text": "={{ String(`⚠️ MiniBatch 실패: ${$json.topic} (${$json.jobId})\\n${$json.message}`).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }}",
         "additionalFields": {
-          "appendAttribution": false
+          "appendAttribution": false,
+          "parse_mode": "HTML"
         }
       },
       "id": "5cbcd4c1-1370-5a4e-811d-d7e9aa3eb0cb",
