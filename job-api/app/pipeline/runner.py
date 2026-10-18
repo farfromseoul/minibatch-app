@@ -239,6 +239,8 @@ class Runner:
                 set_status(s, job, "FAILED", now, reason=message[:500])
             elif kind == "quota":
                 set_status(s, job, "WAITING", now, reason=f"다시 할 시각 {retry_at}")
+            elif kind == "blocked":
+                set_status(s, job, "WAITING", now, reason=message[:500])
             else:
                 s.flush()
                 transient = s.scalar(select(func.count()).select_from(StepRun).where(

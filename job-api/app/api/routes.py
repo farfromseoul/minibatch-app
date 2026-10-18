@@ -17,6 +17,7 @@ from app.core.errors import ApiError
 from app.db.models import Job, Series, Topic
 from app.domain import cancel as cancel_domain, generation, review, series as series_domain, topics as topic_domain
 from app.domain.jobs import create_job
+from app.domain.upload_order import next_job
 from app.publish import approve as publishing
 from app.youtube.client import YouTubeError
 
@@ -213,6 +214,14 @@ def list_jobs(request: Request, status: Optional[str] = Query(default=None)) -> 
         if status:
             q = q.where(Job.status == status)
         return {"items": [job_summary(j) for j in s.scalars(q)]}
+
+
+@api.get("/jobs/next")
+def get_next_job(request: Request) -> dict[str, Any]:
+    """이어 할 작업 (D31). /jobs/{job_id} 보다 먼저 선언해야 'next' 가 작업 ID 로 잡히지 않는다"""
+    st = _st(request)
+    with st.db() as s:
+        return next_job(s, st.clock())
 
 
 def _get_job(s, job_id: str) -> Job:

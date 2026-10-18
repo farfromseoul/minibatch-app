@@ -15,6 +15,7 @@ from app.core.timeutil import kst_date, kst_day_start_utc
 from app.db.models import Episode, Job, JobEvent, Series, Topic
 
 from .text import normalize_topic
+from .upload_order import waiting_for_upload
 
 INACTIVE = ("FAILED", "REJECTED", "CANCELLED")  # 중복 검사에서 빼는 상태
 PRODUCED = ("REVIEW", "APPROVED", "SCHEDULED", "PUBLISHED")  # 다 만들어진 작업 (다음 화를 미리 만들어도 되는 앞 화)
@@ -70,11 +71,13 @@ def _next_episode(s: Session, series: Series) -> Episode:
         raise ApiError(409, "series_no_planned_episode", "만들 화가 없다")
     if ep.number > 1:
         # D27: 앞 화가 승인 전이어도 다 만들어졌으면(REVIEW 이후) 다음 화를 미리 만든다. 승인·공개는 화 순서대로 (review.approve)
+        # D31: 업로드만 남은 앞 화(한도 대기 등)도 다 만든 것으로 본다. 업로드 순서는 upload 단계가 지킨다
         prev = s.scalar(select(Episode).where(Episode.series_id == series.id, Episode.number == ep.number - 1))
         prev_job = s.get(Job, prev.job_id) if prev is not None and prev.job_id else None
-        if prev is None or (prev.status != "APPROVED" and (prev_job is None or prev_job.status not in PRODUCED)):
+        produced = prev_job is not None and (prev_job.status in PRODUCED or waiting_for_upload(prev_job))
+        if prev is None or (prev.status != "APPROVED" and not produced):
             raise ApiError(409, "previous_episode_not_ready",
-                           f"{ep.number - 1}화가 다 만들어진(REVIEW) 뒤에 {ep.number}화를 만든다 (D27)")
+                           f"{ep.number - 1}화가 다 만들어진(qc 통과) 뒤에 {ep.number}화를 만든다 (D27·D31)")
     return ep
 
 
@@ -92,9 +95,12 @@ def _check_auto_limits(s: Session, settings, now: datetime) -> None:
     today = s.scalar(select(func.count()).select_from(Job).where(Job.created_at >= kst_day_start_utc(now)))
     if today >= settings.daily_job_limit:
         raise ApiError(409, "daily_limit_reached", f"오늘 만든 작업이 한도({settings.daily_job_limit})에 닿았다")
-    backlog = s.scalar(select(func.count()).select_from(Job).where(Job.status == "REVIEW"))
+    # 검토 대기 + 업로드 대기(D31): 미리 만든 영상이 끝없이 쌓이지 않게
+    backlog = s.scalar(select(func.count()).select_from(Job).where(
+        (Job.status == "REVIEW") | (Job.status.in_(("PENDING", "RUNNING", "WAITING")) & (Job.current_step == "upload"))))
     if backlog >= settings.review_backlog_limit:
-        raise ApiError(409, "review_backlog_full", f"검토 대기가 {backlog}건이라 새 작업을 만들지 않는다 (D15)")
+        raise ApiError(409, "review_backlog_full",
+                       f"검토·업로드 대기가 {backlog}건이라 새 작업을 만들지 않는다 (D15·D31)")
 
 
 def create_job(s: Session, settings, now: datetime, *, topic: Optional[str], category: str,

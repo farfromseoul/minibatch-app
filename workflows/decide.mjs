@@ -1,5 +1,6 @@
 // 생산 워크플로 "다음 행동" 판단. 작업 상세(GET /jobs/{id})와 단계 순서만 보고 정한다 (부작용 없음).
 // 행동: run(단계 요청) · poll(다시 보기) · reset(되돌리기) · done(검토 대기) · fail(알림) · stop(조용히 끝)
+//       next(이 작업은 기다리게 두고 다음 작업으로, D31: 업로드 한도·앞 화 업로드 대기 중에도 다음 화를 만든다)
 export function decide(job, pipeline, opt) {
   const last = {};
   for (const r of job.steps || []) last[r.step] = r; // 시도 순서대로 오므로 마지막이 지금 시도
@@ -31,8 +32,12 @@ export function decide(job, pipeline, opt) {
     if (r.status === "running") return { action: "poll", step, waitSec: 10 };
     if (r.status === "failed") {
       if (r.kind === "quota") {
-        if (r.retryAt && new Date(r.retryAt) > opt.now) return { action: "stop", message: `할당량 초과, ${r.retryAt} 이후 다시 (다음 일정 실행이 잇는다)` };
+        if (r.retryAt && new Date(r.retryAt) > opt.now) return { action: "next", message: `할당량 초과, ${r.retryAt} 이후 다시 (그동안 다음 작업)` };
         return { action: "run", step, waitSec: 5 };
+      }
+      if (r.kind === "blocked") {
+        if (job.blockedBy) return { action: "next", message: job.blockedBy };
+        return { action: "run", step, waitSec: 5 }; // 앞 화가 올라갔다
       }
       if (r.kind === "transient") return { action: "run", step, waitSec: 60 };
       return { action: "fail", message: `${step} 실패(${r.kind}): ${r.error}` };

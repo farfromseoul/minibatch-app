@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.timeutil import iso
 from app.db.models import Artifact, Episode, Job, JobEvent, Publication, Series, StepRun, Topic
+from app.domain.upload_order import upload_blocker
 
 
 def job_summary(job: Job) -> dict[str, Any]:
@@ -30,6 +31,8 @@ def job_detail(s: Session, job: Job) -> dict[str, Any]:
         "artifacts": [{"step": a.step, "kind": a.kind, "path": a.path, "sha256": a.sha256} for a in arts],
         "events": [{"from": e.from_status, "to": e.to_status, "actor": e.actor, "reason": e.reason,
                     "at": iso(e.at)} for e in events],
+        # 앞 화 업로드 대기(D31)가 아직 풀리지 않았으면 그 이유. 풀렸으면 None → n8n 이 upload 를 다시 요청
+        "blockedBy": upload_blocker(s, job) if runs and runs[-1].kind == "blocked" and job.status == "WAITING" else None,
         "publication": None if pub is None else {
             "platform": pub.platform, "videoId": pub.video_id, "visibility": pub.visibility,
             "publishAt": iso(pub.publish_at), "approvedBy": pub.approved_by, "approvedAt": iso(pub.approved_at),

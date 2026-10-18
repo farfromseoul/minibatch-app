@@ -11,6 +11,7 @@ from typing import Any, Callable, Optional
 from sqlalchemy import select
 
 from app.core.category import load_category
+from app.domain.upload_order import upload_blocker
 from app.db.models import Episode, Job, Publication, Series
 from app.media.ffmpeg import analyze as ffmpeg_analyze
 from app.pipeline.files import sha256_path
@@ -130,6 +131,9 @@ class UploadStep:
 
         with ctx.db() as s:
             row = s.get(Job, ctx.job_id)
+            blocker = upload_blocker(s, row)
+            if blocker:  # D31: 앞 화보다 먼저 올리지 않는다. 실패가 아니라 기다림(WAITING)
+                raise StepFailure("blocked", blocker)
             pub = s.get(Publication, ctx.job_id)
             prev_video, prev_digest = (pub.video_id, pub.uploaded_sha256) if pub else (None, None)
             series = s.get(Series, row.series_id) if row.series_id else None

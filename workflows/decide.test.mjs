@@ -57,14 +57,24 @@ test("갱신 토큰 만료로 upload 실패하면 15번 안내가 메시지에 �
   assert.match(d.message, /15번/);
 });
 
-test("할당량 대기는 다시 할 시각 전이면 멈추고, 지나면 다시 요청", () => {
+test("할당량 대기는 다시 할 시각 전이면 다음 작업으로(D31), 지나면 다시 요청", () => {
   const steps = P.slice(0, 3).map((s) => run(s, "succeeded"));
   steps.push(run("upload", "failed", { kind: "quota", retryAt: "2026-10-17T07:05:00Z" }));
   const before = decide(job("WAITING", steps), P, opt);
-  assert.equal(before.action, "stop");
+  assert.equal(before.action, "next");
   assert.match(before.message, /2026-10-17T07:05:00Z/);
   const after = decide(job("WAITING", steps), P, { ...opt, now: new Date("2026-10-17T08:00:00Z") });
   assert.deepEqual(after, { action: "run", step: "upload", waitSec: 5 });
+});
+
+test("앞 화 업로드 대기(blocked)면 다음 작업으로, 풀렸으면(blockedBy 없음) 업로드 다시 요청 (D31)", () => {
+  const steps = P.slice(0, 3).map((s) => run(s, "succeeded"));
+  steps.push(run("upload", "failed", { kind: "blocked", error: "1화가 아직 업로드되지 않았다" }));
+  const blocked = decide({ ...job("WAITING", steps), blockedBy: "1화가 아직 업로드되지 않았다" }, P, opt);
+  assert.equal(blocked.action, "next");
+  assert.match(blocked.message, /1화/);
+  const freed = decide({ ...job("WAITING", steps), blockedBy: null }, P, opt);
+  assert.deepEqual(freed, { action: "run", step: "upload", waitSec: 5 });
 });
 
 test("반려·이미 승인된 작업은 손대지 않는다", () => {

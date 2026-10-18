@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional, Protocol
 
-FAILURE_KINDS = ("transient", "deterministic", "quota")
+FAILURE_KINDS = ("transient", "deterministic", "quota", "blocked")  # blocked: 시리즈 앞 화 업로드 대기 (D31)
 
 
 class StepFailure(Exception):

@@ -107,11 +107,8 @@ t1 = cron(w, "매일 06시 몰아서, 07~23시 매시 이어서", ["0 0 6-23 * *
 t2 = manual(w, [0, 200])
 cfg = code(w, "설정", CONFIG_JS, [220, 100])
 pipe = http(w, "단계 순서", "GET", "={{ $('설정').first().json.api }}/pipeline", [440, 100])
-jobs = http(w, "작업 목록", "GET", "={{ $('설정').first().json.api }}/jobs", [660, 100])
-pick = code(w, "이어 할 작업 찾기", """// 끝나지 않은 작업(앞 실행이 멈췄거나 할당량 대기)이 있으면 그것부터 잇는다
-const items = $input.first().json.items || [];
-const open = items.find(j => ['RUNNING', 'PENDING', 'WAITING'].includes(j.status));
-return [{ json: { jobId: open ? open.id : null } }];""", [880, 100])
+# 이어 할 작업은 job-api 가 정한다 (D31): 끝나지 않은 작업 중 기다릴 이유(업로드 한도, 앞 화 업로드 전)가 없는 것. 없으면 새 작업
+jobs = http(w, "이어 할 작업", "GET", "={{ $('설정').first().json.api }}/jobs/next", [660, 100])
 sw0 = switch(w, "이어 할 작업 있나", "={{ $json.jobId ? 0 : 1 }}", 2, [1100, 100])
 new = http(w, "새 작업 만들기", "POST", "={{ $('설정').first().json.api }}/jobs", [1320, 260], body="={}", full=True)
 newr = code(w, "새 작업 결과", """// 201 이면 새 작업. 409 는 하루 한도·검토 적체·앞 화 제작 중·후보 없음 (D15·D27)
@@ -134,8 +131,8 @@ const pipeline = $('단계 순서').first().json.steps;
 const d = decide(job, pipeline, { now: new Date(), runIndex: $runIndex, maxRuns: 360, maxResets: 2 });
 return [{ json: { ...d, jobId: job.id, topic: job.topic, seriesId: job.seriesId,
                   episodeNumber: job.episodeNumber, url: job.publication?.url || null } }];""", [2640, 100])
-sw2 = switch(w, "행동", "={{ ({ done: 0, fail: 1, stop: 2 })[$json.action] ?? 3 }}", 4, [2860, 100])
-nxt = w.add("다음 작업으로", "n8n-nodes-base.noOp", 1, {}, [3080, -160])  # 검토 대기 알림은 job-api 가 [승인][반려] 버튼과 함께 보낸다 (D28)
+sw2 = switch(w, "행동", "={{ ({ done: 0, next: 0, fail: 1, stop: 2 })[$json.action] ?? 3 }}", 4, [2860, 100])
+nxt = w.add("다음 작업으로", "n8n-nodes-base.noOp", 1, {}, [3080, -160])  # 검토 대기 알림은 job-api 가 [승인][반려] 버튼과 함께 보낸다 (D28). next: 기다리는 작업은 두고 (D31)
 tgf = telegram(w, "알림: 실패", "={{ `⚠️ MiniBatch 실패: ${$json.topic} (${$json.jobId})\\n${$json.message}` }}", [3080, 20])
 end1 = w.add("끝(멈춤)", "n8n-nodes-base.noOp", 1, {}, [3080, 180])
 wt = w.add("기다리기", "n8n-nodes-base.wait", 1.1, {"amount": "={{ Math.max(1, $json.waitSec || 1) }}", "unit": "seconds"},
@@ -144,7 +141,7 @@ sw3 = switch(w, "요청 종류", "={{ ({ run: 0, reset: 1 })[$json.action] ?? 2 
 req = http(w, "단계 요청", "POST", "={{ $('설정').first().json.api }}/jobs/{{ $json.jobId }}/steps/{{ $json.step }}",
            [3520, 260], body="={}")
 rst = http(w, "되돌리기", "POST", "={{ $('설정').first().json.api }}/jobs/{{ $json.jobId }}/reset?from={{ $json.from }}", [3520, 440])
-for a, b in [(t1, cfg), (t2, cfg), (cfg, pipe), (pipe, jobs), (jobs, pick), (pick, sw0), (new, newr), (newr, sw1),
+for a, b in [(t1, cfg), (t2, cfg), (cfg, pipe), (pipe, jobs), (jobs, sw0), (new, newr), (newr, sw1),
              (fix, st), (st, dec), (dec, sw2), (nxt, jobs), (wt, sw3), (req, st), (rst, st)]:
     w.link(a, b)
 w.link(sw0, fix, 0); w.link(sw0, new, 1)
