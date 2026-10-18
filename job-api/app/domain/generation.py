@@ -15,6 +15,7 @@ from app.llm.base import LlmEngine, LlmError
 from app.llm.converse import converse
 from app.llm.prompting import render, render_messages
 
+from . import series_order
 from .series import KEY
 from .text import normalize_topic
 
@@ -84,12 +85,15 @@ def generate_series_plan(s: Session, settings, now: datetime, llm: LlmEngine, *,
     if s.get(Series, key) is not None:
         raise ApiError(409, "series_exists", f"같은 key 의 시리즈가 있다: {key}")
     recent = list(s.scalars(select(Series.title).order_by(Series.created_at.desc()).limit(30)))
+    used = _used_topics(s)
+    used_keys = {normalize_topic(t) for t in used}
     messages, _ = render_messages("series_plan", count=count, category_title=cat.get("title", category),
                        audience=cat.get("audience", ""),
                        title_line=f"'{title}'이라는" if title else "새",
                        title_rule="" if title else "- title: 시리즈 제목 한 줄. 아래 예전 시리즈와 주제·인물이 겹치지 않게\n",
                        recent="" if title or not recent else "예전 시리즈 제목:\n" + "\n".join(f"- {t}" for t in recent) + "\n",
-                       given_bible=f"사용자가 정한 설정(그대로 쓴다): {json.dumps(bible, ensure_ascii=False)}" if bible else "")
+                       given_bible=f"사용자가 정한 설정(그대로 쓴다): {json.dumps(bible, ensure_ascii=False)}" if bible else "",
+                       continuity=_continuity(s), used_topics="\n".join(f"- {t}" for t in used) or "- (없음)")
     st = {"type": "string"}
     schema = {"type": "object", "properties": {
         # 2026-10-17: 가상 인물(characters)을 없앴다. 진행자 한 명의 연속 강의형 (오글거림·이해 방해)
@@ -112,6 +116,10 @@ def generate_series_plan(s: Session, settings, now: datetime, llm: LlmEngine, *,
             return ["화마다 title 과 outline 이 필요하다"]
         if not title and not str(d.get("title") or "").strip():
             return ["시리즈 title 이 필요하다"]
+        repeats = [f"{i}화 '{e['title']}'" for i, e in enumerate(d["episodes"], start=1)
+                   if normalize_topic(str(e["title"])) in used_keys]
+        if repeats:  # D33: 이미 다룬 주제는 중복 검사에 걸려 그 화를 만들 수 없다 (2026-10-18 실제)
+            return [f"{', '.join(repeats)} 는 이미 다룬 주제다. 이미 다룬 주제 목록과 겹치지 않는 새 개념으로 바꾼다"]
         return []
 
     data = _ask(llm, messages, schema, "series_plan", check)
@@ -122,6 +130,33 @@ def generate_series_plan(s: Session, settings, now: datetime, llm: LlmEngine, *,
     for i, e in enumerate(data["episodes"], start=1):  # 번호는 코드가 매긴다
         s.add(Episode(series_id=key, number=i, title=e["title"], outline=e["outline"], status="PLANNED"))
     return series
+
+
+def _used_topics(s: Session, limit: int = 200) -> list[str]:
+    """다시 다루면 안 되는 주제: 취소하지 않은 작업의 주제와, 순번 안 시리즈의 화 제목 (D33)"""
+    topics = list(s.scalars(select(Job.topic).where(Job.status != "CANCELLED").order_by(Job.created_at.desc()).limit(limit)))
+    for series in series_order.ordered(s):
+        topics += list(s.scalars(select(Episode.title).where(Episode.series_id == series.id).order_by(Episode.number)))
+    seen, out = set(), []
+    for t in topics:
+        if normalize_topic(t) not in seen:
+            seen.add(normalize_topic(t))
+            out.append(t)
+    return out
+
+
+def _continuity(s: Session) -> str:
+    """몇 번째 시리즈인지와 이어받을 바로 앞 시리즈 (D33: 앞 시리즈와 연관되게, 겹치지 않게)"""
+    n = series_order.next_sequence(s)
+    prev = series_order.previous(s)
+    if prev is None:
+        return f"이번이 {n}번째 시리즈다(첫 시리즈)."
+    eps = s.scalars(select(Episode).where(Episode.series_id == prev.id).order_by(Episode.number)).all()
+    lines = "\n".join(f"- {e.number}화 {e.title}" for e in eps)
+    premise = (prev.bible or {}).get("premise", "")
+    return (f"이번이 {n}번째 시리즈다. 바로 앞 {series_order.label(s, prev)}(전제: {premise})에서 다룬 화:\n{lines}\n"
+            "이번 시리즈는 앞 시리즈를 본 시청자가 다음으로 궁금해할 주제로 잡는다: 앞 시리즈에서 배운 개념을 바탕으로 "
+            "한 단계 더 깊은 원리나 그 개념이 쓰이는 다음 영역으로 잇는다. 앞 시리즈의 개념을 다시 설명하는 화는 만들지 않는다.")
 
 
 def approve_series_plan(s: Session, series: Series, now: datetime, episodes: Optional[list[dict]],

@@ -163,6 +163,16 @@ class SeriesScriptTest(LlmStepCase):
         self.assertIn("recap", self.llm.last_user_text())  # 첫 응답에 recap 이 없어 다시 요청
         self.assertTrue(self.read(job2, "script.json")["recap"].startswith("지난 이야기"))
 
+    def test_last_episode_prompt_asks_to_wrap_up_the_series(self):
+        job2 = self.episode2_job()  # 2화가 마지막 화
+        self.llm.responses = [script_of(38, 8, recap="지난 화에서 AI 뜻을 봤죠.", episodeSummary="머신러닝을 배움")]
+
+        self.run_until(job2, "script")
+
+        prompt = self.llm.last_user_text()
+        self.assertIn("마지막 화", prompt)
+        self.assertIn("시리즈 전체", prompt)  # summary 로 시리즈를 마무리한다 (D33, 2026-10-18 사용자 요청)
+
 
 class ReviewStepTest(LlmStepCase):
     def test_pass_with_rule_warnings(self):

@@ -14,6 +14,7 @@ from app.core.errors import ApiError
 from app.core.timeutil import kst_date, kst_day_start_utc
 from app.db.models import Episode, Job, JobEvent, Series, Topic
 
+from . import series_order
 from .text import normalize_topic
 from .upload_order import waiting_for_upload
 
@@ -78,6 +79,10 @@ def _next_episode(s: Session, series: Series) -> Episode:
         if prev is None or (prev.status != "APPROVED" and not produced):
             raise ApiError(409, "previous_episode_not_ready",
                            f"{ep.number - 1}화가 다 만들어진(qc 통과) 뒤에 {ep.number}화를 만든다 (D27·D31)")
+    else:
+        blocker = series_order.production_blocker(s, series)  # D33: 앞 시리즈를 다 만든 뒤에 다음 시리즈
+        if blocker:
+            raise ApiError(409, "previous_series_not_finished", blocker)
     return ep
 
 
@@ -118,11 +123,14 @@ def create_job(s: Session, settings, now: datetime, *, topic: Optional[str], cat
 
 def _auto_select(s: Session, settings, now: datetime) -> Job:
     _check_auto_limits(s, settings, now)
+    skipped = []  # 왜 못 만들었는지 (no_candidates 알림에 싣는다. 2026-10-18: 이유가 숨어 원인을 찾기 어려웠다)
     for series in s.scalars(select(Series).where(Series.status.in_(("APPROVED", "ACTIVE")))
-                            .order_by(Series.created_at)):
+                            .order_by(Series.approved_at, Series.created_at)):
         try:
             return _create_episode_job(s, settings, now, series)
-        except ApiError:
+        except ApiError as e:
+            if e.code != "series_no_planned_episode":
+                skipped.append(f"- {series_order.label(s, series)}: {e.message}")
             continue  # 앞 화 승인 대기 등. 다음 후보로
     for t in s.scalars(select(Topic).where(Topic.status == "READY").order_by(Topic.created_at, Topic.id)):
         try:
@@ -131,4 +139,4 @@ def _auto_select(s: Session, settings, now: datetime) -> Job:
             continue
         t.status = "USED"
         return job
-    raise ApiError(409, "no_candidates", "만들 수 있는 시리즈 화나 승인된 주제가 없다")
+    raise ApiError(409, "no_candidates", "만들 수 있는 시리즈 화나 승인된 주제가 없다" + ("\n" + "\n".join(skipped) if skipped else ""))

@@ -7,3 +7,4 @@ $previous
 $recap_rule
 episodeSummary: 이번 화에서 설명한 핵심 개념과 결론을 다음 화 대본 작가가 이어받을 수 있게 2문장으로 (대본에 넣지 않는다)
 $teaser_rule
+$closing_rule

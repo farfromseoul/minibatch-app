@@ -16,6 +16,7 @@ from app.core.errors import ApiError
 from app.core.timeutil import to_utc_naive
 from app.db.models import Episode, Job, Publication, Series
 
+from . import series_order
 from .status import set_status
 
 
@@ -33,6 +34,10 @@ def approve(s: Session, settings, job: Job, now: datetime, approved_by: str, pub
         prev = s.scalar(select(Episode).where(Episode.series_id == job.series_id, Episode.number == ep.number - 1))
         if prev is None or prev.status != "APPROVED":
             raise ApiError(409, "previous_episode_not_approved", f"{ep.number - 1}화를 먼저 승인한다")
+    elif ep is not None:  # 다음 시리즈 1화는 앞 시리즈가 끝난 뒤에 공개 (D33)
+        blocker = series_order.approval_blocker(s, s.get(Series, job.series_id))
+        if blocker:
+            raise ApiError(409, "previous_series_not_done", blocker)
     pub = s.get(Publication, job.id) or Publication(job_id=job.id, platform="youtube", visibility="private")
     pub.approved_by = approved_by
     pub.approved_at = now

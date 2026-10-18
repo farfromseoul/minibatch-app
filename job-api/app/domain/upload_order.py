@@ -11,7 +11,9 @@ from typing import Any, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import Episode, Job, Publication, StepRun
+from app.db.models import Episode, Job, Publication, Series, StepRun
+
+from . import series_order
 
 from .status import RUNNABLE
 
@@ -23,8 +25,11 @@ def waiting_for_upload(job: Job) -> bool:
 
 def upload_blocker(s: Session, job: Job) -> Optional[str]:
     """이 작업을 지금 올리면 안 되는 이유. 시리즈 앞 화가 아직 YouTube 에 없으면 그 화를 알린다"""
-    if not job.series_id or not job.episode_number or job.episode_number <= 1:
+    if not job.series_id or not job.episode_number:
         return None
+    if job.episode_number <= 1:  # 다음 시리즈 1화는 앞 시리즈 마지막 화 뒤에 (D33)
+        series = s.get(Series, job.series_id)
+        return series_order.upload_blocker(s, series) if series is not None else None
     n = job.episode_number - 1
     prev = s.scalar(select(Episode).where(Episode.series_id == job.series_id, Episode.number == n))
     if prev is not None and prev.status == "APPROVED":

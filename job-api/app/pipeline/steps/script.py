@@ -68,7 +68,10 @@ def _series_block(series: dict | None) -> str:
                     if series["episode"] > 1 else ""),
         teaser_rule=("nextTeaser: 다음 화에서 설명할 것을 궁금하게 만드는 질문 한 문장(25자 안팎). "
                      "'다음 화에서는 ~합니다' 같은 설명문은 쓰지 않는다. 예: '그럼 그 숫자로 어떻게 다음 단어를 고를까요?' (대본 맨 끝에 읽는다)"
-                     if series["nextOutline"] else ""))
+                     if series["nextOutline"] else ""),
+        closing_rule=("이번이 시리즈의 마지막 화다. summary 는 이번 화의 결론에 이어 시리즈 전체에서 배운 흐름을 한 문장으로 묶어 "
+                      "시리즈를 마무리한다 (예: '토큰에서 샘플링까지, 이제 AI가 답을 만드는 과정이 보이죠.'). "
+                      "끝 인사는 코드가 붙이므로 쓰지 않는다 (D26·D33)" if not series["nextOutline"] else ""))
     return text
 
 

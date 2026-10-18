@@ -15,7 +15,7 @@ from sqlalchemy import select
 
 from app.core.errors import ApiError
 from app.db.models import Episode, Job, Publication, Series
-from app.domain import generation, review
+from app.domain import generation, review, series_order
 from app.publish.approve import approve_and_publish
 
 from .telegram import TelegramBot, TelegramError
@@ -50,7 +50,7 @@ class TelegramApprovals:
             series = s.get(Series, job.series_id) if job.series_id else None
             lines = [f"🎬 검토 대기: {head}{job.topic}"]
             if series is not None:
-                lines.append(f"시리즈: {series.title}")
+                lines.append(f"시리즈: {series_order.label(s, series)}")  # 몇 번째 시리즈 (D33)
             lines.append(f"영상(비공개): https://www.youtube.com/shorts/{pub.video_id}" if pub and pub.video_id else "영상: 업로드 전")
             lines.append("승인하면 바로 공개됩니다.")
             text = "\n".join(lines)
@@ -62,7 +62,10 @@ class TelegramApprovals:
             if series is None or series.status != "PROPOSED":
                 return
             eps = s.scalars(select(Episode).where(Episode.series_id == series_id).order_by(Episode.number)).all()
-            text = "\n".join([f"📝 새 시리즈 계획 승인 필요: {series.title}", str((series.bible or {}).get("premise", ""))]
+            prev = series_order.previous(s)
+            head = f"📝 새 시리즈 계획 승인 필요 ({series_order.next_sequence(s)}번째 시리즈): {series.title}"
+            after = [f"앞 시리즈: {series_order.label(s, prev)}"] if prev is not None else []
+            text = "\n".join([head, *after, str((series.bible or {}).get("premise", ""))]
                              + [f"{e.number}. {e.title}" for e in eps])
         self._safe_send(text, [("계획 승인", f"p:{series_id}")])
 

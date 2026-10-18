@@ -153,6 +153,7 @@ class SeriesOrderTest(TelegramCase):
         self.assertEqual(self.status(ep2), "REVIEW")
         self.assertIn("1화를 먼저 승인", self.tg.sent("editMessageText")[-1]["text"])
         self.assertIn("2화", self.tg.sent("sendMessage")[-1]["text"])  # 검토 대기 알림에 화 번호
+        self.assertIn("1번째 시리즈 '민지의 AI 적응기'", self.tg.sent("sendMessage")[-1]["text"])  # 몇 번째 시리즈 (D33)
 
 
 PLAN = {"title": "민준의 데이터 탐험", "bible": {"premise": "데이터를 배운다", "tone": "t", "characters": []},
@@ -169,6 +170,7 @@ class PlanButtonTest(TelegramCase):
         (msg,) = self.tg.sent("sendMessage")
         self.assertIn("민준의 데이터 탐험", msg["text"])
         self.assertIn("1. 데이터란", msg["text"])
+        self.assertIn("1번째 시리즈", msg["text"])  # 첫 시리즈 계획 (D33)
         self.assertEqual(msg["reply_markup"]["inline_keyboard"][0][0]["callback_data"], f"p:{sid}")
 
         self.tg.press(f"p:{sid}")

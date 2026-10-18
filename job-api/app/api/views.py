@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.timeutil import iso
 from app.db.models import Artifact, Episode, Job, JobEvent, Publication, Series, StepRun, Topic
+from app.domain import series_order
 from app.domain.upload_order import upload_blocker
 
 
@@ -45,7 +46,7 @@ def series_detail(s: Session, series: Series) -> dict[str, Any]:
     eps = s.scalars(select(Episode).where(Episode.series_id == series.id).order_by(Episode.number)).all()
     return {"id": series.id, "category": series.category, "title": series.title, "bible": series.bible,
             "planSource": series.plan_source, "status": series.status, "approvedAt": iso(series.approved_at),
-            "playlistId": series.youtube_playlist_id,
+            "playlistId": series.youtube_playlist_id, "sequence": series_order.sequence(s, series),
             "episodes": [{"number": e.number, "title": e.title, "outline": e.outline, "summary": e.summary,
                           "nextTeaser": e.next_teaser, "status": e.status, "jobId": e.job_id} for e in eps]}
 
@@ -53,7 +54,7 @@ def series_detail(s: Session, series: Series) -> dict[str, Any]:
 def series_summary(s: Session, series: Series) -> dict[str, Any]:
     statuses = list(s.scalars(select(Episode.status).where(Episode.series_id == series.id)))
     return {"id": series.id, "category": series.category, "title": series.title, "status": series.status,
-            "planSource": series.plan_source, "playlistId": series.youtube_playlist_id,
+            "sequence": series_order.sequence(s, series), "planSource": series.plan_source, "playlistId": series.youtube_playlist_id,
             "createdAt": iso(series.created_at), "approvedAt": iso(series.approved_at),
             "counts": {"total": len(statuses), "planned": statuses.count("PLANNED"),
                        "inProduction": statuses.count("IN_PRODUCTION"), "approved": statuses.count("APPROVED"),
