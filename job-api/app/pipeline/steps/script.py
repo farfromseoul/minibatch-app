@@ -13,7 +13,7 @@ from typing import Any
 from app.core.category import load_category
 from app.llm.prompting import render, render_messages
 from app.text.cta import outro_for
-from app.text.sentences import count_chars, script_sentences
+from app.text.sentences import count_chars, repeated_sentences, script_sentences
 
 from .base import StepContext, StepFailure
 from .llm_common import ask, meta_of
@@ -64,7 +64,8 @@ def _series_block(series: dict | None) -> str:
         "series_block", series_title=series["title"], episode=series["episode"], total=series["totalEpisodes"],
         bible=json.dumps(series["bible"], ensure_ascii=False), previous=previous, outline=series["outline"],
         next_outline=series["nextOutline"] or "(마지막 화)",
-        recap_rule=("recap: 앞 화 핵심을 짚고 이번 화로 잇는 한 문장(25자 안팎). 예: '지난 화에서 AI가 단어를 숫자로 바꾼다는 걸 봤죠.' (대본 맨 앞에 읽는다)"
+        recap_rule=("recap: 앞 화 핵심을 짚어 이번 화 질문과 잇는 한 문장(25자 안팎). 예: '지난 화에서 단어가 숫자로 바뀌는 걸 봤는데, 그 숫자로 무엇을 할까요?' "
+                    "(hook 바로 다음에 읽는다. body 에는 앞 화 이야기를 다시 쓰지 않는다)"
                     if series["episode"] > 1 else ""),
         teaser_rule=("nextTeaser: 다음 화에서 설명할 것을 궁금하게 만드는 질문 한 문장(25자 안팎). "
                      "'다음 화에서는 ~합니다' 같은 설명문은 쓰지 않는다. 예: '그럼 그 숫자로 어떻게 다음 단어를 고를까요?' (대본 맨 끝에 읽는다)"
@@ -104,7 +105,10 @@ class ScriptStep:
             missing = [k for k in schema["required"] if not data.get(k)] if isinstance(data, dict) else schema["required"]
             if missing:
                 return [f"{k} 가 없다" + (" (recap: 앞 화 핵심을 짚는 한 문장)" if k == "recap" else "") for k in missing]
-            for i, sentence in enumerate(script_sentences(data), start=1):
+            spoken = script_sentences(data)
+            for i, j in repeated_sentences(spoken):  # 2026-10-18: recap 이 body 에 또 나옴, summary 가 body 를 되풀이
+                problems.append(f"{j + 1}번째 문장이 {i + 1}번째 문장을 되풀이한다. 새 내용으로 바꾼다: {spoken[j]}")
+            for i, sentence in enumerate(spoken, start=1):
                 if count_chars(sentence) > max_sentence:
                     problems.append(f"{i}번째 문장이 {count_chars(sentence)}자다. {max_sentence}자 이내로 나눈다: {sentence}")
             # 말하는 문장 전부(지난 이야기·다음 화 예고 포함)를 센다
