@@ -3,7 +3,7 @@ import { AbsoluteFill, Html5Audio, Loop, OffthreadVideo, Sequence, useCurrentFra
 
 import { Subtitle } from "./layers/Subtitle";
 import { fitFontSize, SAFE } from "./lib/layout";
-import type { Timeline } from "./lib/timeline";
+import { headerBrand, type Timeline } from "./lib/timeline";
 import { SCENES } from "./scenes";
 import { type Area, KEY, KEYNOTE_BG, KEYNOTE_SCENES } from "./scenes/keynote";
 import { type Theme, themeOf } from "./theme";
@@ -116,12 +116,15 @@ export const Short: React.FC<ShortProps> = ({ timeline, assetBase }) => {
 
   if (theme.style === "letterbox") {
     const title = headerTitle(timeline);
+    const brand = headerBrand(timeline);
     const titleSize = fitFontSize(title, 960, 84, 52) ?? 52;
     return (
       <AbsoluteFill style={{ background: theme.background, fontFamily: theme.font }}>
-        <div style={{ position: "absolute", top: SAFE.top - 150, width: 1080, textAlign: "center", color: theme.text, fontSize: 34, fontWeight: 700, letterSpacing: 1 }}>
-          {timeline.header?.brand ?? "MiniBatch"}
-        </div>
+        {brand && (
+          <div style={{ position: "absolute", top: SAFE.top - 150, width: 1080, textAlign: "center", color: theme.text, fontSize: 34, fontWeight: 700, letterSpacing: 1 }}>
+            {brand}
+          </div>
+        )}
         <div style={{ position: "absolute", top: SAFE.top + 90, left: 60, width: 960, textAlign: "center", color: theme.text, fontSize: titleSize, fontWeight: 800, lineHeight: 1.2, wordBreak: "keep-all" }}>
           {title}
         </div>

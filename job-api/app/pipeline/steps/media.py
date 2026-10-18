@@ -217,5 +217,7 @@ class RenderStep:
             if m:
                 scene["media"] = {"type": "video", "src": m["path"], "durationInFrames": max(1, int(m["durationSec"] * t["fps"]))}
         cat = load_category(ctx.settings, job["category"])
-        t["header"] = {"brand": str(cat.get("brand") or "MiniBatch"), "title": job["topic"]}
+        t["header"] = {"title": job["topic"]}
+        if cat.get("brand"):  # 영상 위 브랜드 글자는 카테고리가 정할 때만 (기본 없음, 2026-10-18 사용자 피드백)
+            t["header"]["brand"] = str(cat["brand"])
         return t

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { validateTimeline } from "../src/lib/timeline.ts";
+import { headerBrand, validateTimeline } from "../src/lib/timeline.ts";
 
 const sample = () => JSON.parse(readFileSync(new URL("./fixtures/sample-timeline.json", import.meta.url), "utf8"));
 
@@ -93,4 +93,11 @@ test("장면 media 는 작업 폴더 안 영상 경로와 양의 프레임 수",
     t.scenes[0].media = media;
     assert.ok(validateTimeline(t).some((e) => e.includes("media")), JSON.stringify(media));
   }
+});
+
+test("영상 위 브랜드 글자는 header.brand 가 있을 때만 (없으면 그리지 않는다, 2026-10-18)", () => {
+  assert.equal(headerBrand({ header: { title: "벡터 데이터베이스란?" } }), null);
+  assert.equal(headerBrand({}), null);
+  assert.equal(headerBrand({ header: { brand: "  " } }), null);
+  assert.equal(headerBrand({ header: { brand: "채널" } }), "채널");
 });

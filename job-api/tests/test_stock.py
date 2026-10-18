@@ -229,7 +229,7 @@ class RenderTimelineTest(StockCase):
         self.assertEqual(t["scenes"][0]["media"], {"type": "video", "src": "clips/s01.mp4", "durationInFrames": 450})
         self.assertNotIn("media", t["scenes"][1])
         self.assertEqual(t["header"]["title"], "벡터 데이터베이스란?")
-        self.assertTrue(t["header"]["brand"])
+        self.assertNotIn("brand", t["header"])  # 영상 위 브랜드 글자는 넣지 않는다 (2026-10-18 사용자 피드백)
         self.assertTrue((self.job_dir(job_id) / "render.timeline.json").is_file())
 
 

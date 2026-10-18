@@ -145,3 +145,6 @@ export function validateTimeline(t: unknown): string[] {
   }
   return e;
 }
+
+/** 영상 위 브랜드 글자. header.brand 가 있을 때만 그린다 (기본 없음, 2026-10-18 사용자 피드백) */
+export const headerBrand = (t: Pick<Timeline, "header">): string | null => t.header?.brand?.trim() || null;
