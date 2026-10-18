@@ -165,3 +165,13 @@ class PlanContinuityTest(AppTestCase):
         self.assertEqual(len(self.llm.requests), 2)
         self.assertIn("토큰이란 무엇일까?", self.llm.last_user_text())
         self.assertEqual(res.json()["episodes"][0]["title"], "검색은 어떻게 고를까")
+
+    def test_episode_number_prefix_in_titles_is_removed(self):
+        numbered = dict(PLAN, episodes=[{"title": "1화 검색은 어떻게 고를까", "outline": "a"},
+                                        {"title": "2화. 추천은 어떻게 고를까", "outline": "b"}])
+        self.llm.responses = [numbered]
+
+        res = self.post("/series", {"category": "ai-it", "episodeCount": 2})
+
+        # 2026-10-18 실제: 'N화 ' 가 붙어 검토 알림이 '1화 1화 …' 로 나왔다. 화 번호는 코드가 매긴다
+        self.assertEqual([e["title"] for e in res.json()["episodes"]], ["검색은 어떻게 고를까", "추천은 어떻게 고를까"])

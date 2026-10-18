@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import Any, Optional
 
@@ -117,7 +118,7 @@ def generate_series_plan(s: Session, settings, now: datetime, llm: LlmEngine, *,
         if not title and not str(d.get("title") or "").strip():
             return ["시리즈 title 이 필요하다"]
         repeats = [f"{i}화 '{e['title']}'" for i, e in enumerate(d["episodes"], start=1)
-                   if normalize_topic(str(e["title"])) in used_keys]
+                   if normalize_topic(_title(e["title"])) in used_keys]
         if repeats:  # D33: 이미 다룬 주제는 중복 검사에 걸려 그 화를 만들 수 없다 (2026-10-18 실제)
             return [f"{', '.join(repeats)} 는 이미 다룬 주제다. 이미 다룬 주제 목록과 겹치지 않는 새 개념으로 바꾼다"]
         return []
@@ -128,8 +129,15 @@ def generate_series_plan(s: Session, settings, now: datetime, llm: LlmEngine, *,
     s.add(series)
     s.flush()  # 화보다 시리즈를 먼저 넣는다 (부록 B: 저장 순서)
     for i, e in enumerate(data["episodes"], start=1):  # 번호는 코드가 매긴다
-        s.add(Episode(series_id=key, number=i, title=e["title"], outline=e["outline"], status="PLANNED"))
+        s.add(Episode(series_id=key, number=i, title=_title(e["title"]), outline=e["outline"], status="PLANNED"))
     return series
+
+
+EP_PREFIX = re.compile(r"^\s*\d+\s*화[\s.:)\-]*")  # LLM 이 붙이는 'N화 ' (번호는 코드가 매긴다, 2026-10-18)
+
+
+def _title(t: Any) -> str:
+    return EP_PREFIX.sub("", str(t)).strip()
 
 
 def _used_topics(s: Session, limit: int = 200) -> list[str]:
