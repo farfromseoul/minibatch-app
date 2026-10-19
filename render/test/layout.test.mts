@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { CONTENT_BOTTOM, entrance, fitFontSize, flowLayout, revealCount, SAFE } from "../src/lib/layout.ts";
+import { CONTENT_BOTTOM, entrance, fitFontSize, flowLayout, kenBurns, revealCount, SAFE } from "../src/lib/layout.ts";
 
 test("흐름도는 화살표 방향으로 위에서 아래로 층을 나눈다", () => {
   const pos = flowLayout(
@@ -55,4 +55,11 @@ test("순차 공개는 장면 앞 70% 동안 하나씩 늘어난다", () => {
   assert.equal(revealCount(69, 100, 4), 4);
   assert.equal(revealCount(99, 100, 4), 4);
   assert.ok(revealCount(30, 100, 4) >= 2);
+});
+
+test("사진은 장면 동안 천천히 확대·이동한다 (처음 1.0배, 끝 1.08배, 장면마다 방향이 다르다)", () => {
+  assert.deepEqual(kenBurns(0, 300, 0), { scale: 1, x: 0, y: 0 });
+  assert.equal(kenBurns(300, 300, 0).scale, 1.08);
+  assert.ok(kenBurns(150, 300, 0).scale > 1 && kenBurns(150, 300, 0).scale < 1.08);
+  assert.notDeepEqual(kenBurns(300, 300, 0), kenBurns(300, 300, 1));  // 장면 순번으로 이동 방향을 바꾼다
 });

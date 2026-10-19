@@ -1,8 +1,8 @@
 import React from "react";
-import { AbsoluteFill, Html5Audio, Loop, OffthreadVideo, Sequence, useCurrentFrame } from "remotion";
+import { AbsoluteFill, Html5Audio, Img, Loop, OffthreadVideo, Sequence, useCurrentFrame } from "remotion";
 
 import { Subtitle } from "./layers/Subtitle";
-import { fitFontSize, SAFE } from "./lib/layout";
+import { fitFontSize, kenBurns, SAFE } from "./lib/layout";
 import { headerBrand, type Timeline } from "./lib/timeline";
 import { SCENES } from "./scenes";
 import { type Area, KEY, KEYNOTE_BG, KEYNOTE_SCENES } from "./scenes/keynote";
@@ -42,18 +42,31 @@ const KeynoteScenes: React.FC<{ timeline: Timeline; theme: Theme; area: Area }> 
   </>
 );
 
-/** 레터박스 가운데 판: 스톡 영상이 있는 장면은 영상(소리 없음, 짧으면 반복), 없으면 키노트 도식 */
+/** 사진 장면: 장면 동안 천천히 확대·이동 (Sequence 안이라 frame 은 장면 처음부터) */
+const PanelImage: React.FC<{ src: string; durationInFrames: number; index: number }> = ({ src, durationInFrames, index }) => {
+  const k = kenBurns(useCurrentFrame(), durationInFrames, index);
+  return (
+    <Img src={src} style={{ width: 1080, height: PANEL.height, objectFit: "cover",
+                            transform: `translate(${k.x}px, ${k.y}px) scale(${k.scale})` }} />
+  );
+};
+
+/** 레터박스 가운데 판: 스톡 영상이 있는 장면은 영상(소리 없음, 짧으면 반복), 사진은 천천히 확대, 없으면 키노트 도식 */
 const PanelScenes: React.FC<{ timeline: Timeline; theme: Theme; assetBase: string }> = ({ timeline, theme, assetBase }) => (
   <>
-    {timeline.scenes.map((s) => {
+    {timeline.scenes.map((s, i) => {
       const Scene = KEYNOTE_SCENES[s.visual.component];
       return (
         <Sequence key={s.id} from={s.fromFrame} durationInFrames={s.durationInFrames} name={s.id}>
           {s.media ? (
             <div style={{ position: "absolute", left: 0, top: PANEL.top, width: 1080, height: PANEL.height, overflow: "hidden" }}>
-              <Loop durationInFrames={s.media.durationInFrames}>
-                <OffthreadVideo src={assetBase + s.media.src} muted style={{ width: 1080, height: PANEL.height, objectFit: "cover" }} />
-              </Loop>
+              {s.media.type === "image" ? (
+                <PanelImage src={assetBase + s.media.src} durationInFrames={s.durationInFrames} index={i} />
+              ) : (
+                <Loop durationInFrames={s.media.durationInFrames}>
+                  <OffthreadVideo src={assetBase + s.media.src} muted style={{ width: 1080, height: PANEL.height, objectFit: "cover" }} />
+                </Loop>
+              )}
             </div>
           ) : (
             <Scene durationInFrames={s.durationInFrames} animationPreset={s.animationPreset} theme={theme} props={s.visual.props} area={PANEL_AREA} />

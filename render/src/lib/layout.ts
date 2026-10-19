@@ -72,3 +72,12 @@ export function revealCount(frame: number, duration: number, count: number): num
   const window = Math.max(1, duration * 0.7);
   return Math.min(count, 1 + Math.floor(clamp01(frame / window) * count));
 }
+
+/** 사진 장면의 천천히 확대·이동(켄 번스). 장면 처음 1.0배 → 끝 1.08배, 이동 방향은 장면 순번으로 돌린다 (2026-10-19) */
+export function kenBurns(frame: number, duration: number, index: number): { scale: number; x: number; y: number } {
+  const t = duration > 0 ? Math.min(1, Math.max(0, frame / duration)) : 0;
+  const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]] as const;
+  const [dx, dy] = dirs[((index % dirs.length) + dirs.length) % dirs.length];
+  const round = (n: number) => Math.round(n * 1000) / 1000;
+  return { scale: round(1 + 0.08 * t), x: round(dx * 30 * t) || 0, y: round(dy * 18 * t) || 0 };
+}

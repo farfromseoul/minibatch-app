@@ -26,6 +26,12 @@ def hit(i, duration, low=False, width=1280):
                        "large": {"url": f"https://cdn.pixabay.com/video/{i}_large.mp4", "width": 1920, "height": 1080, "size": 30_000_000}}}
 
 
+def img(i, width=1920, height=1280):
+    return {"id": i, "tags": "data, center", "user": f"photo{i}", "pageURL": f"https://pixabay.com/photos/{i}/",
+            "imageWidth": width, "imageHeight": height, "largeImageURL": f"https://cdn.pixabay.com/photo/{i}_1280.jpg",
+            "webformatURL": f"https://cdn.pixabay.com/photo/{i}_640.jpg"}
+
+
 class FakePixabayServer:
     def __init__(self, hits):
         self.hits, self.requests, self.status = hits, [], 200
@@ -60,6 +66,26 @@ class PixabayClientTest(unittest.TestCase):
         # 저품질(2)·폭 1280 미만(4)은 빼고, 장면 길이 이상인 것(3)을 앞에
         self.assertEqual([c.id for c in clips], [3, 1])
         self.assertEqual((clips[0].user, clips[0].url), ("user3", "https://cdn.pixabay.com/video/3_medium.mp4"))
+
+    def test_image_search_asks_horizontal_photos_and_uses_large_image(self):
+        self.server.hits = [img(51), img(52, width=800), img(53, width=1200, height=1600)]
+
+        pics = self.px.search_images("data center")
+
+        req = self.server.requests[0]
+        self.assertEqual(req.url.path, "/api/")
+        self.assertEqual({k: req.url.params[k] for k in ("image_type", "orientation", "safesearch", "min_width")},
+                         {"image_type": "photo", "orientation": "horizontal", "safesearch": "true", "min_width": "1280"})
+        # 폭 1280 미만(52), 세로가 더 긴 것(53)은 뺀다
+        self.assertEqual([p.id for p in pics], [51])
+        self.assertEqual((pics[0].url, pics[0].kind, pics[0].user), ("https://cdn.pixabay.com/photo/51_1280.jpg", "image", "photo51"))
+
+    def test_image_and_video_searches_are_cached_separately(self):
+        self.px.search("data center", 8)
+        self.server.hits = [img(51)]
+        self.px.search_images("data center")
+
+        self.assertEqual(len(self.server.requests), 2)
 
     def test_relevance_order_is_kept_within_long_enough_clips(self):
         self.server.hits = [hit(11, 20), hit(12, 30), hit(13, 25)]  # API 가 관련도 순으로 준다 (downloads 는 13 이 가장 적음)
@@ -113,14 +139,23 @@ def timeline(theme):
 
 class FakeStock:
     def __init__(self, fail=None):
-        self.fail, self.queries = fail, []
+        from app.stock.pixabay import Clip
+        self.fail, self.queries, self.image_queries = fail, [], []
+        self.videos = [Clip(id=7, url="https://cdn/x.mp4", width=1280, height=720, duration=15.0, user="kim", page="https://pixabay.com/videos/7/")]
+        self.images = [Clip(id=70, url="https://cdn/p.jpg", width=1920, height=1280, duration=0.0, user="lee",
+                            page="https://pixabay.com/photos/70/", kind="image")]
 
     def search(self, q, min_seconds):
         self.queries.append((q, min_seconds))
         if self.fail:
             raise self.fail
-        from app.stock.pixabay import Clip
-        return [Clip(id=7, url="https://cdn/x.mp4", width=1280, height=720, duration=15.0, user="kim", page="https://pixabay.com/videos/7/")]
+        return list(self.videos)
+
+    def search_images(self, q):
+        self.image_queries.append(q)
+        if self.fail:
+            raise self.fail
+        return list(self.images)
 
     def download(self, clip, dest):
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -189,6 +224,63 @@ class VisualsStockTest(StockCase):
         self.assertEqual([s["source"] for s in self.visuals(job_id)["scenes"]], ["template", "template"])
 
 
+class VisualsVarietyTest(StockCase):
+    """2026-10-19 사용자 피드백: 커버가 다 비슷하다(노트북 키보드·휴대폰). 최근 쓴 소재·검색어를 피하고, 이미지도 쓴다"""
+
+    def history(self):
+        return self.settings.data_dir / "cache" / "pixabay" / "used.json"
+
+    def test_image_kind_downloads_a_photo(self):
+        self.llm.responses = [{"queries": [{"scene": "s01", "query": "data center aisle", "kind": "image"},
+                                           {"scene": "s02", "query": "", "kind": "video"}]}]
+        job_id = self.new_job()
+
+        self.run_until(job_id, "visuals")
+
+        s01 = self.visuals(job_id)["scenes"][0]
+        self.assertEqual((s01["source"], s01["mediaType"], s01["path"]), ("stock", "image", "clips/s01.jpg"))
+        self.assertEqual(self.stock.image_queries, ["data center aisle"])
+        self.assertEqual(self.stock.queries, [])
+        self.assertTrue((self.job_dir(job_id) / "clips" / "s01.jpg").is_file())
+
+    def test_video_without_results_falls_back_to_image(self):
+        self.stock.videos = []
+        self.llm.responses = [{"queries": [{"scene": "s01", "query": "server rack lights", "kind": "video"},
+                                           {"scene": "s02", "query": "", "kind": "video"}]}]
+        job_id = self.new_job()
+
+        self.run_until(job_id, "visuals")
+
+        self.assertEqual(self.visuals(job_id)["scenes"][0]["mediaType"], "image")
+
+    def test_recently_used_material_is_skipped(self):
+        from app.stock.pixabay import Clip
+        self.stock.videos.append(Clip(id=8, url="https://cdn/y.mp4", width=1280, height=720, duration=15.0, user="park",
+                                      page="https://pixabay.com/videos/8/"))
+        self.history().parent.mkdir(parents=True, exist_ok=True)
+        self.history().write_text(json.dumps([{"id": 7, "kind": "video", "query": "laptop keyboard typing", "at": "2026-10-18"}]))
+        self.llm.responses = [{"queries": [{"scene": "s01", "query": "server room", "kind": "video"},
+                                           {"scene": "s02", "query": "", "kind": "video"}]}]
+        job_id = self.new_job()
+
+        self.run_until(job_id, "visuals")
+
+        self.assertIn("pixabay.com/videos/8/", self.visuals(job_id)["scenes"][0]["credit"]["page"])  # 7 은 최근에 썼다
+        self.assertIn("laptop keyboard typing", self.llm.requests[0]["messages"][-1]["content"])  # 최근 검색어를 알려 겹치지 않게
+        used = json.loads(self.history().read_text())
+        self.assertEqual([(u["id"], u["query"]) for u in used][-1], (8, "server room"))
+
+    def test_query_prompt_asks_for_varied_concrete_material(self):
+        self.llm.responses = [{"queries": []}]
+        job_id = self.new_job()
+
+        self.run_until(job_id, "visuals")
+
+        system = self.llm.requests[0]["messages"][0]["content"]
+        self.assertIn("image", system)
+        self.assertIn("노트북", system)  # 흔한 노트북·키보드 영상은 그 내용일 때만
+
+
 class VisualsCardThemeTest(StockCase):
     theme = "default"
 
@@ -231,6 +323,14 @@ class RenderTimelineTest(StockCase):
         self.assertEqual(t["header"]["title"], "벡터 데이터베이스란?")
         self.assertNotIn("brand", t["header"])  # 영상 위 브랜드 글자는 넣지 않는다 (2026-10-18 사용자 피드백)
         self.assertTrue((self.job_dir(job_id) / "render.timeline.json").is_file())
+
+    def test_image_media_goes_to_render_without_duration(self):
+        self.llm.responses = [{"queries": [{"scene": "s01", "query": "data center", "kind": "image"}, {"scene": "s02", "query": "", "kind": "video"}]}]
+        job_id = self.new_job("벡터 데이터베이스란?")
+
+        self.run_until(job_id, "render")
+
+        self.assertEqual(self.posted[0]["scenes"][0]["media"], {"type": "image", "src": "clips/s01.jpg"})
 
 
 class CategoryThemeTest(StockCase):

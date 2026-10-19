@@ -117,6 +117,36 @@ class CodexAnswerTest(BridgeCase):
         self.assertEqual(args[args.index("-m") + 1], "gpt-5.5")
 
 
+class EffortTest(BridgeCase):
+    """Codex 사용량 줄이기 (2026-10-19): 규칙대로 고르는 일(장면·검색어)은 추론을 낮게, 대본은 기본"""
+
+    def body(self, name):
+        return dict(BODY, response_format={"type": "json_schema", "json_schema": {"name": name, "schema": SCHEMA}})
+
+    def test_effort_is_set_per_schema_name(self):
+        b = self.bridge(fake_codex(self.dir, answer='{"title": "x"}'), effort={"scenes": "low"})
+
+        b.chat(self.body("scenes"))
+
+        args = self.recorded()["args"]
+        self.assertEqual(args[args.index("-c") + 1], 'model_reasoning_effort="low"')
+
+    def test_no_effort_option_for_other_steps(self):
+        b = self.bridge(fake_codex(self.dir, answer='{"title": "x"}'), effort={"scenes": "low"})
+
+        b.chat(self.body("script"))
+
+        self.assertNotIn("-c", self.recorded()["args"])
+
+    def test_effort_map_is_read_from_env(self):
+        os.environ["CODEX_EFFORT"] = "scenes=low, visual_queries=low ,script=medium"
+        try:
+            cfg = codex_bridge.Config.from_env()
+        finally:
+            del os.environ["CODEX_EFFORT"]
+        self.assertEqual(cfg.effort, {"scenes": "low", "visual_queries": "low", "script": "medium"})
+
+
 class FallbackTest(BridgeCase):
     def test_usage_limit_falls_back_to_local_llm(self):
         b = self.bridge(fake_codex(self.dir, stderr="ERROR: You've hit your usage limit.", code=1))

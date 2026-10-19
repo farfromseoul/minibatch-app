@@ -88,7 +88,8 @@ test("장면 media 는 작업 폴더 안 영상 경로와 양의 프레임 수",
   const ok = sample();
   ok.scenes[0].media = { type: "video", src: "clips/s01.mp4", durationInFrames: 450 };
   assert.deepEqual(validateTimeline(ok), []);
-  for (const media of [{ type: "video", src: "../x.mp4", durationInFrames: 10 }, { type: "video", src: "clips/a.mp4", durationInFrames: 0 }, { type: "image", src: "a.png", durationInFrames: 5 }]) {
+  for (const media of [{ type: "video", src: "../x.mp4", durationInFrames: 10 }, { type: "video", src: "clips/a.mp4", durationInFrames: 0 },
+                       { type: "image", src: "../a.jpg" }, { type: "gif", src: "clips/a.gif" }]) {
     const t = sample();
     t.scenes[0].media = media;
     assert.ok(validateTimeline(t).some((e) => e.includes("media")), JSON.stringify(media));
@@ -100,4 +101,10 @@ test("영상 위 브랜드 글자는 header.brand 가 있을 때만 (없으면 �
   assert.equal(headerBrand({}), null);
   assert.equal(headerBrand({ header: { brand: "  " } }), null);
   assert.equal(headerBrand({ header: { brand: "채널" } }), "채널");
+});
+
+test("장면 media 로 사진도 쓴다: 작업 폴더 안 경로, 길이는 장면 길이 (2026-10-19)", () => {
+  const ok = sample();
+  ok.scenes[0].media = { type: "image", src: "clips/s01.jpg" };
+  assert.deepEqual(validateTimeline(ok), []);
 });

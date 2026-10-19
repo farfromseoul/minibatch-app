@@ -21,7 +21,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
 
@@ -38,13 +38,27 @@ class Config:
     fallback_url: str = ""         # 예: http://127.0.0.1:1234/v1 (LM Studio). 비우면 대체 없음
     fallback_model: str = ""
     timeout_sec: float = 600
+    # 요청 스키마 이름(script, scenes, visual_queries …) → Codex 추론 강도(low|medium|high).
+    # 규칙대로 고르는 일은 low 로 사용량을 줄인다 (2026-10-19). 없는 이름은 Codex 기본값
+    effort: dict = field(default_factory=dict)
 
     @classmethod
     def from_env(cls) -> "Config":
         e = os.environ
         return cls(codex_bin=e.get("CODEX_BIN", "codex"), codex_model=e.get("CODEX_MODEL", ""),
                    fallback_url=e.get("FALLBACK_URL", ""), fallback_model=e.get("FALLBACK_MODEL", ""),
-                   timeout_sec=float(e.get("CODEX_TIMEOUT_SEC", "600")))
+                   timeout_sec=float(e.get("CODEX_TIMEOUT_SEC", "600")), effort=_parse_effort(e.get("CODEX_EFFORT", "")))
+
+
+def _parse_effort(text: str) -> dict:
+    """'scenes=low,visual_queries=low' → {'scenes': 'low', 'visual_queries': 'low'}"""
+    out = {}
+    for part in text.split(","):
+        if "=" in part:
+            k, v = (x.strip() for x in part.split("=", 1))
+            if k and v:
+                out[k] = v
+    return out
 
 
 class BridgeError(Exception):
@@ -117,6 +131,7 @@ class Bridge:
     def _codex(self, body: dict) -> dict:
         rf = body.get("response_format") or {}
         schema = (rf.get("json_schema") or {}).get("schema") or {"type": "object"}
+        effort = self.cfg.effort.get((rf.get("json_schema") or {}).get("name", ""))
         with tempfile.TemporaryDirectory(prefix="codex-bridge-") as tmp:
             schema_path, out_path, work = (os.path.join(tmp, n) for n in ("schema.json", "answer.json", "work"))
             os.mkdir(work)
@@ -126,6 +141,8 @@ class Bridge:
                    "-C", work, "--color", "never", "--output-schema", schema_path, "-o", out_path]
             if self.cfg.codex_model:
                 cmd += ["-m", self.cfg.codex_model]
+            if effort:
+                cmd += ["-c", f'model_reasoning_effort="{effort}"']
             cmd.append("-")
             started = time.time()
             try:
@@ -142,7 +159,8 @@ class Bridge:
                 json.loads(text)
             except (OSError, ValueError):
                 raise BridgeError(429, "invalid_output: codex 답이 JSON 이 아니다")
-        log.info("codex 답 %.1f초", time.time() - started)
+        log.info("codex 답 %.1f초 (%s, 추론 %s)", time.time() - started,
+                 (rf.get("json_schema") or {}).get("name", "-"), effort or "기본")
         self.last_fallback_reason = None
         return {"id": f"codex-{int(started)}", "object": "chat.completion", "model": "codex",
                 "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": text}}],
@@ -200,7 +218,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     host, port = os.environ.get("BRIDGE_HOST", "127.0.0.1"), int(os.environ.get("BRIDGE_PORT", "1235"))
     cfg = Config.from_env()
-    log.info("codex 중계기 %s:%d, codex=%s, 대체=%s", host, port, cfg.codex_bin, cfg.fallback_url or "없음")
+    log.info("codex 중계기 %s:%d, codex=%s, 대체=%s, 추론 강도=%s", host, port, cfg.codex_bin, cfg.fallback_url or "없음", cfg.effort or "기본")
     make_server(Bridge(cfg), host, port).serve_forever()
 
 

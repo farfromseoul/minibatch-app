@@ -4,7 +4,9 @@
 """
 from __future__ import annotations
 
+import json
 import os
+from datetime import datetime
 import shutil
 import subprocess
 from typing import Any, Callable, Optional
@@ -93,8 +95,12 @@ class TimelineStep:
 
 
 QUERY_SCHEMA = {"type": "object", "properties": {"queries": {"type": "array", "items": {
-    "type": "object", "properties": {"scene": {"type": "string"}, "query": {"type": "string"}},
-    "required": ["scene", "query"], "additionalProperties": False}}}, "required": ["queries"], "additionalProperties": False}
+    "type": "object", "properties": {"scene": {"type": "string"}, "query": {"type": "string"},
+                                     "kind": {"type": "string", "enum": ["video", "image"]}},
+    "required": ["scene", "query", "kind"], "additionalProperties": False}}}, "required": ["queries"], "additionalProperties": False}
+RECENT_USED = 150     # 최근 이만큼 쓴 Pixabay 소재는 다시 고르지 않는다 (2026-10-19: 커버가 다 비슷하다는 피드백)
+RECENT_QUERIES = 40   # 최근 검색어를 LLM 에 알려 겹치지 않게
+HISTORY_KEEP = 500
 
 
 class VisualsStep:
@@ -128,11 +134,17 @@ class VisualsStep:
         lines = {s["id"]: s for s in ctx.read_json("scenes.json")["scenes"]}
         listing = "\n".join(f"- {s['id']} ({lines.get(s['id'], {}).get('visual', {}).get('component', '')}): "
                              f"{' '.join(lines.get(s['id'], {}).get('lines', []))}" for s in t["scenes"])
-        messages, _ = render_messages("visual_queries", scenes=listing, max_count=int(cfg.get("max_per_video", 6)))
+        history_path = ctx.settings.data_dir / "cache" / "pixabay" / "used.json"
+        history = _read_history(history_path)
+        recent_ids = {(h.get("kind", "video"), h.get("id")) for h in history[-RECENT_USED:]}
+        recent_queries = list(dict.fromkeys(h["query"] for h in reversed(history) if h.get("query")))[:RECENT_QUERIES]
+        messages, _ = render_messages("visual_queries", scenes=listing, max_count=int(cfg.get("max_per_video", 6)),
+                                      recent="\n".join(f"- {q}" for q in recent_queries) or "- (없음)")
         try:
             out = ask(ctx, messages, QUERY_SCHEMA, "visual_queries",
                       lambda d: [] if isinstance(d, dict) and isinstance(d.get("queries"), list) else ["queries 배열이 필요하다"])
-            queries = {q["scene"]: q["query"].strip() for q in out.data.get("queries", []) if q.get("query", "").strip()}
+            queries = {q["scene"]: (q["query"].strip(), q.get("kind") if q.get("kind") in ("video", "image") else "video")
+                       for q in out.data.get("queries", []) if q.get("query", "").strip()}
         except StepFailure as e:
             ctx.note_degraded(f"스톡 검색어를 정하지 못해 도식으로: {e.message[:200]}")
             return []
@@ -142,27 +154,52 @@ class VisualsStep:
             ctx.note_degraded(f"스톡 공급원을 쓸 수 없어 도식으로: {e.message}")
             return []
         credits, used = [], 0
+        picked: set = set()
         for scene, src in zip(t["scenes"], scenes):
-            q = queries.get(scene["id"])
+            q, kind = queries.get(scene["id"], ("", "video"))
             if not q or used >= int(cfg.get("max_per_video", 6)):
                 continue
             seconds = round(scene["durationInFrames"] / t["fps"], 2)
+            clip = None
             try:
-                found = stock.search(q, seconds)
-                if not found:
-                    ctx.note_degraded(f"{scene['id']} '{q}' 검색 결과 없음, 도식으로")
+                # 고른 종류로 먼저, 쓸 만한 것이 없으면 다른 종류로. 최근 쓴 소재·이 영상에서 이미 쓴 소재는 건너뛴다
+                for k in (kind, "image" if kind == "video" else "video"):
+                    found = stock.search(q, seconds) if k == "video" else stock.search_images(q)
+                    clip = next((c for c in found if (c.kind, c.id) not in recent_ids | picked), None)
+                    if clip is not None:
+                        break
+                if clip is None:
+                    ctx.note_degraded(f"{scene['id']} '{q}' 쓸 만한 새 소재 없음, 도식으로")
                     continue
-                clip = found[0]
-                stock.download(clip, ctx.job_dir / "clips" / f"{scene['id']}.mp4")
+                ext = "jpg" if clip.kind == "image" else "mp4"
+                stock.download(clip, ctx.job_dir / "clips" / f"{scene['id']}.{ext}")
             except StockError as e:
                 ctx.note_degraded(f"{scene['id']} 스톡 실패({e.kind}), 도식으로: {e.message}")
                 continue
             used += 1
-            src.update({"source": "stock", "path": f"clips/{scene['id']}.mp4", "durationSec": clip.duration, "query": q,
-                        "credit": {"site": "Pixabay", "user": clip.user, "page": clip.page}})
+            picked.add((clip.kind, clip.id))
+            history.append({"id": clip.id, "kind": clip.kind, "query": q, "job": ctx.job_id, "at": datetime.utcnow().strftime("%Y-%m-%d")})
+            src.update({"source": "stock", "mediaType": clip.kind, "path": f"clips/{scene['id']}.{ext}", "durationSec": clip.duration,
+                        "query": q, "credit": {"site": "Pixabay", "user": clip.user, "page": clip.page}})
             if all(c["user"] != clip.user for c in credits):
                 credits.append({"site": "Pixabay", "user": clip.user, "page": clip.page})
+        _write_history(history_path, history[-HISTORY_KEEP:])
         return credits
+
+
+def _read_history(path) -> list[dict]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def _write_history(path, items: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
 
 
 LOUDNESS_TARGET_LUFS = -14.0  # YouTube 가 큰 소리를 줄이는 기준으로 알려진 값 (공식 수치 미확인, 앱 설계 "품질 게이트")
@@ -215,7 +252,10 @@ class RenderStep:
         for scene in t["scenes"]:
             m = media.get(scene["id"])
             if m:
-                scene["media"] = {"type": "video", "src": m["path"], "durationInFrames": max(1, int(m["durationSec"] * t["fps"]))}
+                if m.get("mediaType") == "image":  # 사진은 장면 내내 천천히 확대 (render 가 처리)
+                    scene["media"] = {"type": "image", "src": m["path"]}
+                else:
+                    scene["media"] = {"type": "video", "src": m["path"], "durationInFrames": max(1, int(m["durationSec"] * t["fps"]))}
         cat = load_category(ctx.settings, job["category"])
         t["header"] = {"title": job["topic"]}
         if cat.get("brand"):  # 영상 위 브랜드 글자는 카테고리가 정할 때만 (기본 없음, 2026-10-18 사용자 피드백)

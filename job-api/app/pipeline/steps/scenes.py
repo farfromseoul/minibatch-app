@@ -23,6 +23,29 @@ from .llm_common import ask, meta_of
 ROLES = ["hook", "explain", "example", "compare", "summary", "outro"]
 PRESETS = ["pop", "fade", "sequential", "draw"]
 PAD_AFTER_SEC = 0.3
+FIX_CHARS = 28  # 자동 교정 때 문장에서 따올 제목·요점 길이
+
+
+def fix_repeats(scenes: list[dict], sentences: list[str], templates: list[str]) -> tuple[list[dict], list[str]]:
+    """같은 템플릿이 세 번 이어지면 가운데 장면을 TitleReveal(또는 SummaryScene)로 바꾼다. 내용(문장·순서)은 그대로.
+    2026-10-19 실제: Gemma 12B 가 '3연속 금지' 를 세 번 어겨 작업이 실패했다. 다시 묻는 대신 코드가 고친다"""
+    fixed = []
+    for i in range(1, len(scenes) - 1):
+        comp = scenes[i].get("component")
+        if not (scenes[i - 1].get("component") == comp == scenes[i + 1].get("component")):
+            continue
+        lines = [sentences[n - 1] for n in scenes[i].get("sentences", []) if isinstance(n, int) and 1 <= n <= len(sentences)]
+        if not lines:
+            continue
+        if comp != "TitleReveal" and "TitleReveal" in templates:
+            new = {"component": "TitleReveal", "props": {"title": lines[0][:FIX_CHARS]}}
+        elif comp != "SummaryScene" and "SummaryScene" in templates:
+            new = {"component": "SummaryScene", "props": {"points": [ln[:FIX_CHARS] for ln in lines[:3]]}}
+        else:
+            continue
+        scenes[i] = {**scenes[i], **new}
+        fixed.append(f"{i + 1}번 장면 {comp} → {new['component']} (같은 템플릿 3연속)")
+    return scenes, fixed
 
 
 def _schema(templates: list[str]) -> dict:
@@ -60,6 +83,15 @@ class ScenesStep:
                          for t in templates)
         prompt, version = render("scenes", numbered=numbered, templates=spec)
 
+        auto_fixed: list[str] = []
+
+        def adjust(data: Any) -> Any:
+            if isinstance(data, dict) and isinstance(data.get("scenes"), list):
+                data = dict(data, scenes=[dict(sc) for sc in data["scenes"] if isinstance(sc, dict)])
+                data["scenes"], fixed = fix_repeats(data["scenes"], sentences, templates)
+                auto_fixed[:] = fixed  # 시도마다 새로
+            return data
+
         def check(data: Any) -> list[str]:
             scenes = data.get("scenes") if isinstance(data, dict) else None
             if not isinstance(scenes, list) or len(scenes) < 2:
@@ -86,7 +118,7 @@ class ScenesStep:
                 problems.append("마지막 장면 role 은 summary 또는 outro")
             return problems
 
-        out = ask(ctx, [{"role": "user", "content": prompt}], _schema(templates), "scenes", check)
+        out = ask(ctx, [{"role": "user", "content": prompt}], _schema(templates), "scenes", check, adjust=adjust)
         if out.problems:
             raise StepFailure("deterministic", "장면 구성 규칙을 지키지 못했다: " + "; ".join(out.problems)[:800], retry_from="scenes")
         scenes = [{"role": sc["role"], "lines": [sentences[n - 1] for n in sc["sentences"]],
@@ -104,5 +136,5 @@ class ScenesStep:
             "jobId": job["jobId"],
             "title": script["titleCandidates"][0],
             "scenes": [{"id": f"s{i:02d}", **sc} for i, sc in enumerate(scenes, start=1)],
-            "meta": meta_of(out, version),
+            "meta": meta_of(out, version, **({"autoFixed": auto_fixed} if auto_fixed else {})),
         })

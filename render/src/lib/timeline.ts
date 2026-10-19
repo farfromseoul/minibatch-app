@@ -12,8 +12,8 @@ export type TimelineScene = {
   durationInFrames: number;
   visual: TemplateVisual;
   animationPreset: AnimationPreset;
-  /** 레터박스 가운데 판에 깔 스톡 영상 (작업 폴더 기준 경로, 영상 길이 프레임). 없으면 도식 */
-  media?: { type: "video"; src: string; durationInFrames: number };
+  /** 레터박스 가운데 판에 깔 스톡 소재 (작업 폴더 기준 경로). 영상은 길이 프레임, 사진은 장면 내내 천천히 확대. 없으면 도식 */
+  media?: { type: "video"; src: string; durationInFrames: number } | { type: "image"; src: string };
 };
 
 export type Timeline = {
@@ -108,8 +108,10 @@ export function validateTimeline(t: unknown): string[] {
     if (!PRESETS.includes(s?.animationPreset)) e.push(`${where}: animationPreset 은 ${PRESETS.join("|")}`);
     if (s?.media !== undefined) {
       const m = s.media;
-      if (!isObj(m) || m.type !== "video" || !isSafeRelative(m.src) || !isInt(m.durationInFrames) || m.durationInFrames <= 0) {
-        e.push(`${where}: media 는 {type: video, src: 작업 폴더 안 경로, durationInFrames: 양의 정수}`);
+      const video = isObj(m) && m.type === "video" && isSafeRelative(m.src) && isInt(m.durationInFrames) && m.durationInFrames > 0;
+      const image = isObj(m) && m.type === "image" && isSafeRelative(m.src);
+      if (!video && !image) {
+        e.push(`${where}: media 는 {type: video, src: 작업 폴더 안 경로, durationInFrames: 양의 정수} 또는 {type: image, src: 작업 폴더 안 경로}`);
       }
     }
     const v = s?.visual;

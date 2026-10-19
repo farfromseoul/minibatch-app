@@ -246,11 +246,31 @@ class ScenesStepTest(LlmStepCase):
         flow = bad["scenes"][1]
         bad["scenes"][2] = dict(flow, sentences=[5, 6])
         bad["scenes"].insert(3, dict(flow, sentences=[7]))
-        self.llm.responses = [script, {"issues": [], "scores": GOOD_SCORES, "verdict": "pass"}, bad, self.good_scenes(script)]
+        self.llm.responses = [script, {"issues": [], "scores": GOOD_SCORES, "verdict": "pass"}, bad]
 
-        self.job_until("scenes")
+        job_id = self.job_until("scenes")
 
-        self.assertIn("세 번 연달아", self.llm.last_user_text())
+        # 2026-10-19 실제: Gemma 가 같은 규칙을 세 번 어겨 작업이 실패했다. 다시 묻지 않고 코드가 가운데 장면을 바꾼다
+        sc = self.read(job_id, "scenes.json")
+        comps = [s["visual"]["component"] for s in sc["scenes"]]
+        self.assertEqual(comps[1:4], ["FlowDiagram", "TitleReveal", "FlowDiagram"])
+        self.assertEqual(sc["scenes"][2]["visual"]["props"]["title"], self.sentences(script)[4][:28])
+        self.assertEqual(sc["meta"]["autoFixed"], ["3번 장면 FlowDiagram → TitleReveal (같은 템플릿 3연속)"])
+        self.assertEqual(sum(1 for r in self.llm.requests if r["schema_name"] == "scenes"), 1)
+
+    def test_title_reveal_three_times_becomes_summary_in_the_middle(self):
+        script = script_of(38, 8)
+        title = {"role": "explain", "component": "TitleReveal", "props": {"title": "제목"}, "animationPreset": "pop"}
+        scenes = {"scenes": [dict(title, role="hook", sentences=[1]), dict(title, sentences=[2, 3]), dict(title, sentences=[4, 5]),
+                             {"role": "summary", "sentences": [6, 7, 8], "component": "SummaryScene", "props": {"points": ["a"]},
+                              "animationPreset": "fade"}]}
+        self.llm.responses = [script, {"issues": [], "scores": GOOD_SCORES, "verdict": "pass"}, scenes]
+
+        job_id = self.job_until("scenes")
+
+        mid = self.read(job_id, "scenes.json")["scenes"][1]["visual"]
+        self.assertEqual(mid["component"], "SummaryScene")
+        self.assertEqual(mid["props"]["points"], [p[:28] for p in self.sentences(script)[1:3]])
 
     def test_bad_props_three_times_fails_deterministically(self):
         script = script_of(38, 8)

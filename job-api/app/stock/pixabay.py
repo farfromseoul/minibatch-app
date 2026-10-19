@@ -1,4 +1,4 @@
-"""Pixabay 스톡 영상 (2026-10-17, 레터박스 스타일 가운데 판).
+"""Pixabay 스톡 영상·이미지 (2026-10-17 영상, 2026-10-19 이미지 추가. 레터박스 스타일 가운데 판).
 
 API 규칙(공식 문서 2026-10-17): 무료, 출처 표시, 같은 검색 24시간 캐시, 받아서 우리 쪽에 저장(영구 링크 금지),
 대량 다운로드 금지. 라이선스: 출처 표기 의무 없음, 알아볼 수 있는 인물을 부도덕하게 쓰지 않는다.
@@ -16,6 +16,7 @@ from typing import Callable, Optional
 import httpx
 
 API = "https://pixabay.com/api/videos/"
+IMAGE_API = "https://pixabay.com/api/"  # 이미지 검색 (공식 문서 2026-10-19: largeImageURL 은 최대 1280px, 받아서 쓴다)
 UA = "minibatch-job-api/1.0 (+https://github.com/farfromseoul/minibatch-app)"
 CACHE_SEC = 24 * 3600
 MAX_BYTES = 40_000_000
@@ -37,6 +38,7 @@ class Clip:
     duration: float
     user: str
     page: str
+    kind: str = "video"  # video | image
 
 
 class Pixabay:
@@ -66,15 +68,21 @@ class Pixabay:
             raise StockError("deterministic", f"Pixabay {res.status_code}")
         return res
 
-    def _hits(self, query: str) -> list[dict]:
+    def _hits(self, query: str, kind: str = "video") -> list[dict]:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        path = self.cache_dir / (hashlib.sha256(query.lower().encode()).hexdigest()[:24] + ".json")
+        key = query.lower() if kind == "video" else f"{kind}:{query.lower()}"  # 영상 캐시 이름은 예전 그대로
+        path = self.cache_dir / (hashlib.sha256(key.encode()).hexdigest()[:24] + ".json")
         if path.is_file():
             cached = json.loads(path.read_text(encoding="utf-8"))
             if self._now() - cached["at"] < CACHE_SEC:
                 return cached["hits"]
-        params = {"key": self._key, "q": query, "video_type": "film", "safesearch": "true", "min_width": 1280, "per_page": 20}
-        hits = self._get(API, params=params).json().get("hits", [])
+        if kind == "image":
+            params = {"key": self._key, "q": query, "image_type": "photo", "orientation": "horizontal", "safesearch": "true",
+                      "min_width": 1280, "per_page": 20}
+            hits = self._get(IMAGE_API, params=params).json().get("hits", [])
+        else:
+            params = {"key": self._key, "q": query, "video_type": "film", "safesearch": "true", "min_width": 1280, "per_page": 20}
+            hits = self._get(API, params=params).json().get("hits", [])
         path.write_text(json.dumps({"at": self._now(), "query": query, "hits": hits}, ensure_ascii=False), encoding="utf-8")
         return hits
 
@@ -97,6 +105,19 @@ class Pixabay:
         # 장면 길이 이상 → 태그 일치 많은 것 → API 관련도 순 (안정 정렬)
         clips.sort(key=lambda hc: (hc[1].duration < min_seconds, -matched(hc[0])))
         return [c for _, c in clips]
+
+    def search_images(self, query: str) -> list[Clip]:
+        """가로 사진만, 폭 1280 이상. 태그 일치가 많은 것을 앞에(그 안에서는 API 관련도 순)"""
+        words = {w for w in query.lower().split() if len(w) > 2}
+        pics = []
+        for h in self._hits(query, "image"):
+            w, ht, url = int(h.get("imageWidth") or 0), int(h.get("imageHeight") or 0), h.get("largeImageURL")
+            if w < 1280 or w <= ht or not url:
+                continue
+            pics.append((h, Clip(id=int(h["id"]), url=url, width=w, height=ht, duration=0.0, user=str(h.get("user", "")),
+                                 page=str(h.get("pageURL", "")), kind="image")))
+        pics.sort(key=lambda hp: -sum(1 for w in words if w in str(hp[0].get("tags", "")).lower()))
+        return [p for _, p in pics]
 
     def download(self, clip: Clip, dest: Path) -> None:
         res = self._get(clip.url)
