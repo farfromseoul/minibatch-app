@@ -39,6 +39,15 @@ class Clip:
     user: str
     page: str
     kind: str = "video"  # video | image
+    tags: str = ""       # Pixabay 태그 (쉼표로 구분). 검색어와 맞는지 볼 때 쓴다
+
+
+def relevant(tags: str, query: str) -> bool:
+    """검색어의 의미 있는 단어(3자 이상) 가운데 하나라도 태그에 있어야 장면과 맞는 소재로 본다 (2026-10-19 사용자:
+    소재는 대본 설명과 맞아야 한다). 복수형 s 는 떼고 비교한다"""
+    words = {w.rstrip("s") for w in query.lower().split() if len(w) > 2}
+    tagset = {t.strip().rstrip("s") for t in tags.lower().replace(",", " ").split()}
+    return bool(words & tagset)
 
 
 class Pixabay:
@@ -95,7 +104,8 @@ class Pixabay:
             if h.get("isLowQuality") or int(v.get("width") or 0) < 1280 or not v.get("url"):
                 continue
             clips.append((h, Clip(id=int(h["id"]), url=v["url"], width=int(v["width"]), height=int(v["height"]),
-                                  duration=float(h.get("duration") or 0), user=str(h.get("user", "")), page=str(h.get("pageURL", "")))))
+                                  duration=float(h.get("duration") or 0), user=str(h.get("user", "")), page=str(h.get("pageURL", "")),
+                                  tags=str(h.get("tags", "")))))
         words = {w for w in query.lower().split() if len(w) > 2}
 
         def matched(h: dict) -> int:  # 태그에 검색어 단어가 몇 개 들어 있나 (관련도만으로는 엉뚱한 영상이 골라졌다)
@@ -115,7 +125,7 @@ class Pixabay:
             if w < 1280 or w <= ht or not url:
                 continue
             pics.append((h, Clip(id=int(h["id"]), url=url, width=w, height=ht, duration=0.0, user=str(h.get("user", "")),
-                                 page=str(h.get("pageURL", "")), kind="image")))
+                                 page=str(h.get("pageURL", "")), kind="image", tags=str(h.get("tags", "")))))
         pics.sort(key=lambda hp: -sum(1 for w in words if w in str(hp[0].get("tags", "")).lower()))
         return [p for _, p in pics]
 

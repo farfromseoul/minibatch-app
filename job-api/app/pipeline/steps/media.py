@@ -16,7 +16,7 @@ import httpx
 from app.core.category import load_category
 from app.llm.prompting import render_messages
 from app.media.ffmpeg import normalize_loudness
-from app.stock.pixabay import Pixabay, StockError
+from app.stock.pixabay import Pixabay, StockError, relevant
 from app.pipeline.timeline_calc import compute_timeline
 from app.text.pronunciation import apply_pronunciation, load_dictionary
 
@@ -165,11 +165,12 @@ class VisualsStep:
                 # 고른 종류로 먼저, 쓸 만한 것이 없으면 다른 종류로. 최근 쓴 소재·이 영상에서 이미 쓴 소재는 건너뛴다
                 for k in (kind, "image" if kind == "video" else "video"):
                     found = stock.search(q, seconds) if k == "video" else stock.search_images(q)
-                    clip = next((c for c in found if (c.kind, c.id) not in recent_ids | picked), None)
+                    # 태그가 검색어와 하나도 안 맞는 소재는 장면 설명과 맞지 않는다고 보고 쓰지 않는다 (관련성 > 개수)
+                    clip = next((c for c in found if (c.kind, c.id) not in recent_ids | picked and relevant(c.tags, q)), None)
                     if clip is not None:
                         break
                 if clip is None:
-                    ctx.note_degraded(f"{scene['id']} '{q}' 쓸 만한 새 소재 없음, 도식으로")
+                    ctx.note_degraded(f"{scene['id']} '{q}' 장면과 맞는 새 소재 없음, 도식으로")
                     continue
                 ext = "jpg" if clip.kind == "image" else "mp4"
                 stock.download(clip, ctx.job_dir / "clips" / f"{scene['id']}.{ext}")

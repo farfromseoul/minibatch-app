@@ -141,9 +141,10 @@ class FakeStock:
     def __init__(self, fail=None):
         from app.stock.pixabay import Clip
         self.fail, self.queries, self.image_queries = fail, [], []
-        self.videos = [Clip(id=7, url="https://cdn/x.mp4", width=1280, height=720, duration=15.0, user="kim", page="https://pixabay.com/videos/7/")]
+        self.videos = [Clip(id=7, url="https://cdn/x.mp4", width=1280, height=720, duration=15.0, user="kim", page="https://pixabay.com/videos/7/",
+                            tags="server, room, data, center, rack, lights")]
         self.images = [Clip(id=70, url="https://cdn/p.jpg", width=1920, height=1280, duration=0.0, user="lee",
-                            page="https://pixabay.com/photos/70/", kind="image")]
+                            page="https://pixabay.com/photos/70/", kind="image", tags="data, center, aisle, server, rack, lights")]
 
     def search(self, q, min_seconds):
         self.queries.append((q, min_seconds))
@@ -256,7 +257,7 @@ class VisualsVarietyTest(StockCase):
     def test_recently_used_material_is_skipped(self):
         from app.stock.pixabay import Clip
         self.stock.videos.append(Clip(id=8, url="https://cdn/y.mp4", width=1280, height=720, duration=15.0, user="park",
-                                      page="https://pixabay.com/videos/8/"))
+                                      page="https://pixabay.com/videos/8/", tags="server, room"))
         self.history().parent.mkdir(parents=True, exist_ok=True)
         self.history().write_text(json.dumps([{"id": 7, "kind": "video", "query": "laptop keyboard typing", "at": "2026-10-18"}]))
         self.llm.responses = [{"queries": [{"scene": "s01", "query": "server room", "kind": "video"},
@@ -270,6 +271,20 @@ class VisualsVarietyTest(StockCase):
         used = json.loads(self.history().read_text())
         self.assertEqual([(u["id"], u["query"]) for u in used][-1], (8, "server room"))
 
+    def test_material_whose_tags_do_not_match_the_query_is_not_used(self):
+        # 2026-10-19 사용자: 소재는 대본 설명과 맞아야 한다. 태그가 검색어와 하나도 안 맞으면 쓰지 않고 도식으로 둔다
+        from app.stock.pixabay import Clip
+        self.stock.videos = [Clip(id=9, url="https://cdn/z.mp4", width=1280, height=720, duration=15.0, user="choi",
+                                  page="https://pixabay.com/videos/9/", tags="chimney, smoke, sky")]
+        self.stock.images = []
+        self.llm.responses = [{"queries": [{"scene": "s01", "query": "robot arm factory", "kind": "video"},
+                                           {"scene": "s02", "query": "", "kind": "video"}]}]
+        job_id = self.new_job()
+
+        self.run_until(job_id, "visuals")
+
+        self.assertEqual([s["source"] for s in self.visuals(job_id)["scenes"]], ["template", "template"])
+
     def test_query_prompt_asks_for_varied_concrete_material(self):
         self.llm.responses = [{"queries": []}]
         job_id = self.new_job()
@@ -279,6 +294,8 @@ class VisualsVarietyTest(StockCase):
         system = self.llm.requests[0]["messages"][0]["content"]
         self.assertIn("image", system)
         self.assertIn("노트북", system)  # 흔한 노트북·키보드 영상은 그 내용일 때만
+        self.assertIn("관련", system)  # 장면 설명과 맞는 소재만, 없으면 빈 문자열(도식)
+        self.assertNotIn("되도록 소재를 붙인다", system)
 
 
 class VisualsCardThemeTest(StockCase):
