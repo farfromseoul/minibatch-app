@@ -117,6 +117,43 @@ class CodexAnswerTest(BridgeCase):
         self.assertEqual(args[args.index("-m") + 1], "gpt-5.5")
 
 
+FREE = {"type": "object", "properties": {"scenes": {"type": "array", "items": {"type": "object", "properties": {
+    "component": {"type": "string"}, "props": {"type": "object"}}, "required": ["component", "props"]}}}, "required": ["scenes"]}
+
+
+class FreeObjectTest(BridgeCase):
+    """2026-10-19 실제: 장면 props 처럼 속성이 정해지지 않은 객체는 Codex 엄격 형식이 거절한다(invalid_json_schema).
+    Codex 에는 JSON 문자열로 받게 하고, 답에서 다시 객체로 푼다"""
+
+    def body(self):
+        return dict(BODY, response_format={"type": "json_schema", "json_schema": {"name": "scenes", "schema": FREE}})
+
+    def test_free_object_is_sent_as_json_string(self):
+        b = self.bridge(fake_codex(self.dir, answer='{"scenes": [{"component": "TitleReveal", "props": "{\\"title\\": \\"RAG\\"}"}]}'))
+
+        b.chat(self.body())
+
+        props = self.recorded()["schema"]["properties"]["scenes"]["items"]["properties"]["props"]
+        self.assertEqual(props["type"], "string")
+        self.assertIn("JSON", props["description"])
+
+    def test_json_string_is_turned_back_into_object(self):
+        b = self.bridge(fake_codex(self.dir, answer='{"scenes": [{"component": "TitleReveal", "props": "{\\"title\\": \\"RAG\\"}"}]}'))
+
+        self.res = b.chat(self.body())
+
+        self.assertEqual(self.call(), {"scenes": [{"component": "TitleReveal", "props": {"title": "RAG"}}]})
+        self.assertEqual(self.res["model"], "codex")
+
+    def test_bad_json_string_falls_back(self):
+        b = self.bridge(fake_codex(self.dir, answer='{"scenes": [{"component": "TitleReveal", "props": "제목"}]}'))
+
+        self.res = b.chat(self.body())
+
+        self.assertEqual(self.res["model"], "fallback:qwen/qwen3.8-27b")
+        self.assertEqual(b.last_fallback_reason, "invalid_output")
+
+
 class EffortTest(BridgeCase):
     """Codex 사용량 줄이기 (2026-10-19): 규칙대로 고르는 일(장면·검색어)은 추론을 낮게, 대본은 기본"""
 

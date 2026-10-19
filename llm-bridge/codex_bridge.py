@@ -68,23 +68,49 @@ class BridgeError(Exception):
         self.message = message
 
 
+FREE_OBJECT_AS_STRING = {"type": "string", "description": "JSON 객체를 문자열로 쓴다 (예: {\"title\": \"...\"})"}
+
+
+def _free_object(node: Any) -> bool:
+    """속성이 정해지지 않은 객체 (장면 props 처럼 템플릿마다 모양이 다른 것)"""
+    return isinstance(node, dict) and node.get("type") == "object" and not node.get("properties")
+
+
 def strict_schema(schema: Any) -> Any:
-    """OpenAI 엄격 구조화 출력 규칙: 모든 객체에 additionalProperties false, required = 모든 속성"""
-    s = copy.deepcopy(schema)
+    """OpenAI 엄격 구조화 출력 규칙: 모든 객체에 additionalProperties false, required = 모든 속성.
+    속성이 정해지지 않은 객체는 엄격 형식이 받지 않아(invalid_json_schema, 2026-10-19 장면 props) JSON 문자열로 바꾼다.
+    답을 받으면 decode_free_objects 가 다시 객체로 푼다"""
 
-    def walk(node: Any) -> None:
+    def walk(node: Any) -> Any:
+        if _free_object(node):
+            return dict(FREE_OBJECT_AS_STRING)
         if isinstance(node, dict):
-            if node.get("type") == "object" and isinstance(node.get("properties"), dict):
-                node["additionalProperties"] = False
-                node["required"] = list(node["properties"])
-            for v in node.values():
-                walk(v)
-        elif isinstance(node, list):
-            for v in node:
-                walk(v)
+            out = {k: walk(v) for k, v in node.items()}
+            if out.get("type") == "object" and isinstance(out.get("properties"), dict):
+                out["additionalProperties"] = False
+                out["required"] = list(out["properties"])
+            return out
+        if isinstance(node, list):
+            return [walk(v) for v in node]
+        return node
 
-    walk(s)
-    return s
+    return walk(copy.deepcopy(schema))
+
+
+def decode_free_objects(schema: Any, data: Any) -> Any:
+    """strict_schema 가 문자열로 바꾼 자리의 값을 원래 스키마를 따라 객체로 푼다. 객체가 아니면 ValueError"""
+    if _free_object(schema):
+        if isinstance(data, str):
+            data = json.loads(data)
+        if not isinstance(data, dict):
+            raise ValueError("JSON 객체가 아니다")
+        return data
+    if isinstance(schema, dict):
+        if isinstance(data, dict) and isinstance(schema.get("properties"), dict):
+            return {k: decode_free_objects(schema["properties"].get(k), v) for k, v in data.items()}
+        if isinstance(data, list) and isinstance(schema.get("items"), dict):
+            return [decode_free_objects(schema["items"], v) for v in data]
+    return data
 
 
 def codex_env() -> dict:
@@ -156,7 +182,7 @@ class Bridge:
             try:
                 with open(out_path, encoding="utf-8") as f:
                     text = f.read().strip()
-                json.loads(text)
+                text = json.dumps(decode_free_objects(schema, json.loads(text)), ensure_ascii=False)
             except (OSError, ValueError):
                 raise BridgeError(429, "invalid_output: codex 답이 JSON 이 아니다")
         log.info("codex 답 %.1f초 (%s, 추론 %s)", time.time() - started,
