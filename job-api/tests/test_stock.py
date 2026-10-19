@@ -295,7 +295,9 @@ class VisualsVarietyTest(StockCase):
         self.assertIn("image", system)
         self.assertIn("노트북", system)  # 흔한 노트북·키보드 영상은 그 내용일 때만
         self.assertIn("관련", system)  # 장면 설명과 맞는 소재만, 없으면 빈 문자열(도식)
-        self.assertNotIn("되도록 소재를 붙인다", system)
+        # 2026-10-19 실제: '관련 없으면 비워라' 만 강조하자 Codex(low)가 7장면을 모두 비웠다. 목표 개수를 함께 둔다
+        self.assertIn("절반 이상", system)
+        self.assertIn("후킹(첫 장면)에는 반드시", system)
 
 
 class VisualsCardThemeTest(StockCase):
