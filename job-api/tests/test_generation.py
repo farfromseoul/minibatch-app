@@ -82,6 +82,16 @@ class SeriesPlanTest(GenCase):
         self.assertIn("민지의 AI 적응기", self.llm.last_user_text())
         self.assertIn("3", self.llm.last_user_text())
 
+    def test_user_theme_goes_into_prompt(self):
+        """사용자가 정한 주제로 계획을 짠다 (2026-10-19 사용자: 텔레그램으로 주제·화 수 입력)"""
+        self.llm.responses = [dict(PLAN, title="쿠버네티스 첫걸음")]
+
+        res = self.post("/series", {"theme": "쿠버네티스 기초", "episodeCount": 3})
+
+        self.assertEqual(res.status_code, 201, res.text)
+        self.assertIn("쿠버네티스 기초", self.llm.last_user_text())
+        self.assertEqual(res.json()["title"], "쿠버네티스 첫걸음")
+
     def test_wrong_episode_count_is_asked_again(self):
         self.llm.responses = [dict(PLAN, episodes=PLAN["episodes"][:2]), PLAN]
 

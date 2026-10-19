@@ -1,6 +1,6 @@
 """텔레그램 봇 연결부 (아키텍처 D28). Bot API 를 httpx 로 직접 부른다.
 
-나가는 연결만 쓴다: 보내기(sendMessage)와 버튼 응답 가져오기(getUpdates). 웹훅을 쓰지 않아 MacBook 을 인터넷에 열지 않는다.
+나가는 연결만 쓴다: 보내기(sendMessage)와 버튼 응답·글 가져오기(getUpdates). 웹훅을 쓰지 않아 MacBook 을 인터넷에 열지 않는다.
 봇 토큰은 주소에 들어가므로 오류 메시지·로그에 주소를 남기지 않는다.
 """
 from __future__ import annotations
@@ -51,7 +51,7 @@ class TelegramBot:
         return self._call("sendMessage", body)
 
     def get_updates(self, offset: int, timeout: int = 30) -> list[dict[str, Any]]:
-        return self._call("getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["callback_query"]},
+        return self._call("getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["callback_query", "message"]},
                           timeout=timeout + 15) or []
 
     def answer(self, callback_id: str, text: str) -> None:

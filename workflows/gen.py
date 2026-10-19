@@ -229,12 +229,13 @@ const items = $input.first().json.items || [];
 if (items.some(s => s.status === 'PROPOSED')) return [];
 const left = items.filter(s => ['APPROVED', 'ACTIVE'].includes(s.status)).reduce((n, s) => n + (s.counts?.planned || 0), 0);
 return left >= 10 ? [] : [{ json: { left } }];""", [660, 100])
-mkp = http(w, "계획 만들기 (LLM)", "POST", "={{ $('설정').first().json.api }}/series", [880, 100],
-           body="={{ JSON.stringify({ category: $('설정').first().json.category, episodeCount: 10 }) }}", full=True, timeout=900000)
-msg = code(w, "알림 문장", """// 성공하면 job-api 가 [계획 승인] 버튼 메시지를 보낸다 (D28). 여기서는 실패만 알린다 (busy 는 다음 시각에 다시)
+# D37: 계획을 바로 만들지 않고 텔레그램으로 주제·화 수를 묻는다. job-api 가 하루 한 번만 묻고, 답이 오면 계획을 만든다
+mkp = http(w, "주제 묻기 (텔레그램)", "POST", "={{ $('설정').first().json.api }}/series/request", [880, 100],
+           body="={{ JSON.stringify({ category: $('설정').first().json.category, episodeCount: 10 }) }}", full=True)
+msg = code(w, "알림 문장", """// 묻기는 job-api 가 텔레그램으로 보낸다 (D37). 여기서는 실패만 알린다 (오늘 이미 물었으면 asked=false 로 200)
 const r = $input.first().json;
-if (r.statusCode === 201 || r.body?.error?.code === 'busy') return [];
-return [{ json: { text: `⚠️ MiniBatch 시리즈 계획 만들기 실패 (${r.statusCode}): ${r.body?.error?.message || ''}` } }];""", [1100, 100])
+if (r.statusCode === 200) return [];
+return [{ json: { text: `⚠️ MiniBatch 다음 시리즈 주제 묻기 실패 (${r.statusCode}): ${r.body?.error?.message || ''}` } }];""", [1100, 100])
 tg = telegram(w, "알림: 계획", "={{ $json.text }}", [1320, 100])
 for a, b in [(t1, cfg), (t2, cfg), (cfg, lst), (lst, need), (need, mkp), (mkp, msg), (msg, tg)]:
     w.link(a, b)
@@ -261,7 +262,7 @@ for (const s of list) {
 return [{ json: { empty: false, fields, order: list.map(s => s.id) } }];""", [1100, 500])
 sw = switch(w, "승인할 계획 있나", "={{ $json.empty ? 1 : 0 }}", 2, [1320, 500])
 pg = form_page(w, "계획 화면", "MiniBatch 시리즈 계획", "고칠 곳이 있으면 보류하고 알려 주세요(계획 수정은 API 로).", [1540, 400])
-none = form_done(w, "끝: 승인 대기 계획 없음", "승인 대기 계획이 없습니다", "남은 화가 10편보다 적어지면 매일 07시에 새 계획을 만듭니다.", [1540, 660])
+none = form_done(w, "끝: 승인 대기 계획 없음", "승인 대기 계획이 없습니다", "남은 화가 10편보다 적어지면 텔레그램으로 다음 시리즈 주제를 묻습니다(하루 한 번).", [1540, 660])
 plan = code(w, "승인 목록", """const by = $('계획 화면').first().json;
 const who = $('시리즈 계획 승인 폼').first().json['승인자'] || '운영자';
 const out = $('계획 폼 만들기').first().json.order.filter(id => by[id] === '승인').map(id => ({ json: { id, approvedBy: who } }));

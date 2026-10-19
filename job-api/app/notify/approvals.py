@@ -4,16 +4,24 @@
 - 시리즈 계획을 LLM 이 만들면 [계획 승인] 버튼을 단 메시지를 보낸다.
 - getUpdates 로 버튼 응답을 가져와 API 와 같은 규칙으로 처리한다(화 순서 승인, 승인 기록 검사는 그대로).
   정한 chat id 에서 온 응답만 처리한다.
+- 규칙 때문에 처리하지 못한 버튼(화 순서 등)은 메시지·버튼을 그대로 두고 안내만 띄운다 (2026-10-19: 버튼이 지워져 다시 누를 수 없었다).
+- 검토 대기가 6시간 넘게 남고 지금 승인할 수 있는 차례인 영상은 다시 알린다 (2026-10-19 사용자).
+- 다음 시리즈 계획 전에 주제·화 수를 묻는다(D37). 답(`주제, 화수`), [자동으로 정하기], [오늘은 건너뛰기], `/series 주제, 화수`.
+  묻는 상태는 데이터 폴더의 파일에 두어 재시작해도 이어진다. 답이 없으면 다음 날 다시 묻고, 계획은 저절로 만들지 않는다.
 """
 from __future__ import annotations
 
+import json
 import logging
+import re
 import threading
-from typing import Any, Callable
+from pathlib import Path
+from typing import Any, Callable, Optional
 
 from sqlalchemy import select
 
 from app.core.errors import ApiError
+from app.core.timeutil import kst_date
 from app.db.models import Episode, Job, Publication, Series
 from app.domain import generation, review, series_order
 from app.publish.approve import approve_and_publish
@@ -22,6 +30,26 @@ from .telegram import TelegramBot, TelegramError
 
 log = logging.getLogger("job-api.telegram")
 WHO = "텔레그램"
+REMIND_SEC = 6 * 3600  # 검토 대기 다시 알림 간격
+MAX_REMIND = 5         # 한 번에 다시 보내는 최대 수
+DEFAULT_COUNT, MIN_COUNT, MAX_COUNT = 10, 3, 20  # 시리즈 화 수 (D37)
+COUNT = re.compile(r"^(\d+)\s*(화|편)?$")
+EXAMPLE = "예) 쿠버네티스 기초, 8"
+
+
+def parse_request(text: str) -> tuple[str, int]:
+    """'주제, 화수' → (주제, 화수). 화수를 빼면 10. 주제 안의 쉼표는 마지막 쉼표 뒤가 숫자가 아니면 주제로 둔다"""
+    text = text.strip()
+    theme, sep, tail = text.replace("，", ",").rpartition(",")
+    m = COUNT.match(tail.strip()) if sep else None
+    theme, count = (theme.strip(), int(m.group(1))) if m else (text, DEFAULT_COUNT)
+    if not theme:
+        raise ValueError("주제가 비어 있습니다")
+    if len(theme) > 100:
+        raise ValueError("주제는 100자 이내로 써 주세요")
+    if not MIN_COUNT <= count <= MAX_COUNT:
+        raise ValueError(f"화 수는 {MIN_COUNT}~{MAX_COUNT} 사이로 써 주세요")
+    return theme, count
 
 
 class TelegramApprovals:
@@ -31,6 +59,12 @@ class TelegramApprovals:
         self.offset = 0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._reminded: dict[str, Any] = {}  # 작업 → 마지막으로 다시 알린 시각 (재시작하면 비어 6시간 뒤부터 다시 센다)
+        self._state_lock = threading.Lock()  # API(묻기)와 받기 루프(답)가 같은 상태 파일을 고친다
+        self.runner = self.providers = None  # 계획 생성에 쓴다. 서버가 만든 뒤 attach 로 넣는다
+
+    def attach(self, runner, providers) -> None:
+        self.runner, self.providers = runner, providers
 
     # ---------- 보내기
 
@@ -40,7 +74,7 @@ class TelegramApprovals:
         except TelegramError as e:  # 알림이 실패해도 제작은 계속된다 (n8n 검토 폼으로도 승인할 수 있다)
             log.warning("텔레그램 보내기 실패: %s", e)
 
-    def notify_review(self, job_id: str) -> None:
+    def notify_review(self, job_id: str, reminder: bool = False) -> None:
         with self.db() as s:
             job = s.get(Job, job_id)
             if job is None or job.status != "REVIEW":
@@ -48,7 +82,7 @@ class TelegramApprovals:
             pub = s.get(Publication, job_id)
             head = f"{job.episode_number}화 " if job.series_id else ""
             series = s.get(Series, job.series_id) if job.series_id else None
-            lines = [f"🎬 검토 대기: {head}{job.topic}"]
+            lines = [("⏰ 다시 알림 · " if reminder else "") + f"🎬 검토 대기: {head}{job.topic}"]
             if series is not None:
                 lines.append(f"시리즈: {series_order.label(s, series)}")  # 몇 번째 시리즈 (D33)
             lines.append(f"영상(비공개): https://www.youtube.com/shorts/{pub.video_id}" if pub and pub.video_id else "영상: 업로드 전")
@@ -77,6 +111,9 @@ class TelegramApprovals:
             cq = u.get("callback_query")
             if cq:
                 self._handle(cq)
+            elif u.get("message"):
+                self._handle_message(u["message"])
+        self.make_wanted_plan()
 
     def _handle(self, cq: dict[str, Any]) -> None:
         msg = cq.get("message") or {}
@@ -88,7 +125,9 @@ class TelegramApprovals:
         try:
             result = self._apply(kind, target)
         except ApiError as e:
-            result = f"처리하지 못함: {e.message}"
+            # 규칙에 막힌 것(화 순서 등)은 나중에 같은 버튼을 다시 누를 수 있게 메시지·버튼을 그대로 둔다
+            self._try(self.bot.answer, cq["id"], f"처리하지 못함: {e.message}")
+            return
         except Exception as e:  # 버튼 하나의 실패가 받기 루프를 멈추지 않게
             log.exception("텔레그램 버튼 처리 실패")
             result = f"처리하지 못함: {type(e).__name__}"
@@ -96,6 +135,8 @@ class TelegramApprovals:
         self._try(self.bot.edit, chat, msg.get("message_id"), result)
 
     def _apply(self, kind: str, target: str) -> str:
+        if kind == "q":
+            return self._question_button(target)
         now = self.clock()
         with self.db() as s:
             if kind in ("a", "r"):
@@ -120,6 +161,173 @@ class TelegramApprovals:
                 return f"✅ 계획 승인: {series.title} (다음 생산 일정부터 1화씩)"
         return f"모르는 버튼: {kind}"
 
+    # ---------- 다음 시리즈 주제 묻기 (D37)
+
+    def _state_path(self) -> Path:
+        return Path(self.settings.data_dir) / "telegram" / "series_request.json"
+
+    def _load(self) -> dict[str, Any]:
+        try:
+            return json.loads(self._state_path().read_text(encoding="utf-8"))
+        except (FileNotFoundError, ValueError):
+            return {}
+
+    def _save(self, st: dict[str, Any]) -> None:
+        path = self._state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)  # 쓰다 멈춰도 반쯤 쓴 파일이 남지 않게
+
+    def _plan_waiting(self) -> bool:
+        with self.db() as s:
+            return s.scalar(select(Series.id).where(Series.status == "PROPOSED").limit(1)) is not None
+
+    def ask_series(self, category: str, count: int = DEFAULT_COUNT) -> dict[str, Any]:
+        """n8n 3번이 '계획이 필요하다'고 볼 때 부른다(매시). 하루에 한 번만 묻는다 (한국 날짜)"""
+        if self._plan_waiting():
+            return {"asked": False, "reason": "plan_pending"}
+        today = kst_date(self.clock())
+        with self._state_lock:
+            st = self._load()
+            if st.get("askedDate") == today:
+                return {"asked": False, "reason": "asked_today"}
+            with self.db() as s:
+                prev = series_order.previous(s)
+                head = f"📝 다음 시리즈를 준비할 차례입니다 ({series_order.next_sequence(s)}번째 시리즈)."
+                after = [f"앞 시리즈: {series_order.label(s, prev)}"] if prev is not None else []
+            text = "\n".join([head, *after, f"주제와 화 수를 답장해 주세요. {EXAMPLE}",
+                              f"화 수는 {MIN_COUNT}~{MAX_COUNT}(빼면 {DEFAULT_COUNT}). 언제든 /series 주제, 화수 로도 만들 수 있습니다."])
+            try:
+                sent = self.bot.send(text, [("자동으로 정하기", "q:auto"), ("오늘은 건너뛰기", "q:skip")])
+            except TelegramError as e:  # 묻지 못했으면 오늘 물은 것으로 치지 않는다 (다음 시각에 다시)
+                raise ApiError(502, "telegram_failed", f"텔레그램으로 묻지 못했다: {e}") from None
+            self._save({"askedDate": today, "waiting": True, "category": category, "count": count,
+                        "messageId": (sent or {}).get("message_id")})
+        return {"asked": True}
+
+    def _handle_message(self, msg: dict[str, Any]) -> None:
+        chat = str((msg.get("chat") or {}).get("id", ""))
+        if chat != self.bot.chat_id or str((msg.get("from") or {}).get("id", "")) != self.bot.chat_id:
+            return  # 다른 대화에는 답하지 않는다
+        text = str(msg.get("text") or "").strip()
+        with self._state_lock:
+            st = self._load()
+            if text.split(" ", 1)[0].split("@", 1)[0] == "/series":
+                body = text.split(" ", 1)[1] if " " in text else ""
+                if not body.strip():
+                    self._safe_send(f"/series 주제, 화수 로 다음 시리즈 계획을 만듭니다. {EXAMPLE}", None)
+                    return
+            elif st.get("waiting") and not text.startswith("/"):
+                body = text
+            else:
+                return  # 묻는 중이 아닐 때의 글은 답으로 받지 않는다
+            try:
+                theme, count = parse_request(body)
+            except ValueError as e:
+                self._safe_send(f"⚠️ {e}. {EXAMPLE}", None)
+                return
+            if self._plan_waiting():
+                self._safe_send("승인 대기 계획이 있어 새 계획을 만들지 않았습니다. 그 계획을 먼저 승인하거나 n8n 폼에서 처리해 주세요.", None)
+                return
+            self._want(st, theme, count)
+        self._safe_send(f"⏳ 계획을 만드는 중입니다: {theme}, {count}화", None)
+
+    def _question_button(self, target: str) -> str:
+        with self._state_lock:
+            st = self._load()
+            if not st.get("waiting"):
+                return "이미 처리한 질문입니다"
+            if target == "skip":
+                st["waiting"] = False
+                self._save(st)
+                return "⏭ 오늘은 건너뜁니다. 내일 다시 묻습니다 (언제든 /series 주제, 화수)."
+            if target == "auto":
+                if self._plan_waiting():
+                    return "승인 대기 계획이 있어 새 계획을 만들지 않았습니다"
+                self._want(st, None, int(st.get("count") or DEFAULT_COUNT))
+                return "🤖 주제를 자동으로 정합니다. 계획이 나오면 [계획 승인] 메시지를 보냅니다."
+        return f"모르는 버튼: q:{target}"
+
+    def _want(self, st: dict[str, Any], theme: Optional[str], count: int) -> None:
+        """만들 계획을 상태 파일에 적는다. 실제 생성은 make_wanted_plan (제작 중이면 끝난 뒤)"""
+        st.update(waiting=False, want={"theme": theme, "count": count, "category": st.get("category") or "ai-it"})
+        self._save(st)
+
+    def make_wanted_plan(self) -> None:
+        """적어 둔 계획 요청을 만든다. 다른 작업이 실행 중이면 그대로 두고 다음 받기 때 다시 (전역 잠금, D4)"""
+        want = self._load().get("want")
+        if not want or self.runner is None:
+            return
+        try:
+            if self.providers is None:
+                raise ApiError(503, "llm_unavailable", "LLM 제공자 설정(providers.yaml)이 없다")
+            llm = self.providers.llm("series_plan")
+            with self.runner.exclusive("시리즈 계획 생성"), self.db() as s:
+                now = self.clock()
+                series = generation.generate_series_plan(
+                    s, self.settings, now, llm, key=generation.next_series_key(s, now), category=want["category"],
+                    title=None, count=int(want["count"]), bible=None, theme=want.get("theme"))
+                s.commit()
+                series_id = series.id
+        except ApiError as e:
+            if e.code == "busy":
+                if not want.get("toldBusy"):
+                    self._safe_send("다른 작업이 실행 중이라 끝나면 바로 계획을 만듭니다.", None)
+                    self._edit_state(lambda st: st.get("want", {}).update(toldBusy=True))
+                return
+            self._fail_want(e.message)
+            return
+        except Exception as e:  # 계획 하나의 실패가 받기 루프를 멈추지 않게
+            log.exception("시리즈 계획 생성 실패")
+            self._fail_want(type(e).__name__)
+            return
+        self._clear_want()
+        self.notify_plan(series_id)
+
+    def _edit_state(self, fn: Callable[[dict[str, Any]], None]) -> None:
+        with self._state_lock:
+            st = self._load()
+            fn(st)
+            self._save(st)
+
+    def _clear_want(self) -> None:
+        self._edit_state(lambda st: st.pop("want", None))
+
+    def _fail_want(self, why: str) -> None:
+        self._clear_want()
+        self._safe_send(f"⚠️ 시리즈 계획을 만들지 못했습니다: {why}\n/series 주제, 화수 로 다시 요청할 수 있습니다.", None)
+
+    # ---------- 검토 대기 다시 알림
+
+    def remind_due(self) -> None:
+        """검토 대기가 REMIND_SEC 넘게 남고, 지금 승인할 수 있는 차례인 영상을 다시 알린다 (오래된 것부터 MAX_REMIND 개)"""
+        now = self.clock()
+        with self.db() as s:
+            due = []
+            for job in s.scalars(select(Job).where(Job.status == "REVIEW").order_by(Job.updated_at, Job.id)):
+                last = self._reminded.get(job.id) or job.updated_at
+                if last is None or (now - last).total_seconds() < REMIND_SEC or not self._approvable(s, job):
+                    continue
+                due.append(job.id)
+        for job_id in due[:MAX_REMIND]:
+            self.notify_review(job_id, reminder=True)
+            self._reminded[job_id] = now
+
+    @staticmethod
+    def _approvable(s, job: Job) -> bool:
+        """지금 승인 버튼을 누르면 받아들여지는가 (화 순서 D24, 시리즈 순서 D33 과 같은 규칙)"""
+        if not job.series_id:
+            return True
+        ep = s.scalar(select(Episode).where(Episode.series_id == job.series_id, Episode.number == job.episode_number))
+        if ep is None:
+            return True
+        if ep.number > 1:
+            prev = s.scalar(select(Episode).where(Episode.series_id == job.series_id, Episode.number == ep.number - 1))
+            return prev is not None and prev.status == "APPROVED"
+        series = s.get(Series, job.series_id)
+        return series is None or series_order.approval_blocker(s, series) is None
+
     @staticmethod
     def _try(fn, *args) -> None:
         try:
@@ -134,6 +342,7 @@ class TelegramApprovals:
             while not self._stop.is_set():
                 try:
                     self.poll_once(timeout=30)
+                    self.remind_due()
                 except Exception as e:
                     log.warning("텔레그램 받기 실패, 10초 뒤 다시: %s", e)
                     self._stop.wait(10)

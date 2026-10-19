@@ -79,6 +79,7 @@ class SeriesBody(BaseModel):
     bible: dict[str, Any] = Field(default_factory=dict)
     episodes: Optional[list[EpisodePlan]] = None
     episodeCount: Optional[int] = Field(default=None, ge=1, le=50)
+    theme: Optional[str] = Field(default=None, min_length=1, max_length=100)  # 계획 생성: 사용자가 정한 주제 (D37)
 
     @field_validator("episodes")
     @classmethod
@@ -322,7 +323,8 @@ def post_series(body: SeriesBody, request: Request) -> dict[str, Any]:
         with st.runner.exclusive("시리즈 계획 생성"), st.db() as s:
             key = body.key or generation.next_series_key(s, st.clock())
             series = generation.generate_series_plan(s, st.settings, st.clock(), llm, key=key, category=body.category,
-                                                     title=body.title, count=body.episodeCount, bible=body.bible or None)
+                                                     title=body.title, count=body.episodeCount, bible=body.bible or None,
+                                                     theme=body.theme)
             s.commit()
             detail = series_detail(s, series)
         if st.telegram is not None:  # [계획 승인] 버튼 (D28)
@@ -336,6 +338,20 @@ def post_series(body: SeriesBody, request: Request) -> dict[str, Any]:
             bible=body.bible, episodes=[e.model_dump() for e in body.episodes])
         s.commit()
         return series_detail(s, series)
+
+
+class SeriesRequestBody(BaseModel):
+    category: str = "ai-it"
+    episodeCount: int = Field(default=10, ge=3, le=20)  # 자동으로 정하기를 누를 때의 화 수
+
+
+@api.post("/series/request")
+def request_series(body: SeriesRequestBody, request: Request) -> dict[str, Any]:
+    """다음 시리즈 계획 전에 텔레그램으로 주제·화 수를 묻는다 (D37). 계획은 답이 오면 만든다"""
+    st = _st(request)
+    if st.telegram is None:
+        raise ApiError(503, "telegram_off", "텔레그램이 꺼져 있어 주제를 물을 수 없다. POST /series 로 직접 만든다")
+    return st.telegram.ask_series(body.category, body.episodeCount)
 
 
 def _get_series(s, series_id: str) -> Series:

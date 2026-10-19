@@ -9,7 +9,10 @@ import httpx
 
 from app.notify.telegram import TelegramBot
 from tests.fakes import FakeLlm, FakeRegistry
-from tests.helpers import AppTestCase
+from fastapi.testclient import TestClient
+
+from app.main import create_app
+from tests.helpers import AppTestCase, inline_executor
 
 CHAT = "4242"
 
@@ -33,6 +36,11 @@ class FakeTelegram:
 
     def sent(self, method):
         return [b for m, b in self.requests if m == method]
+
+    def say(self, text, chat=CHAT):
+        uid = 100 + len(self.updates)
+        self.updates.append({"update_id": uid, "message": {
+            "message_id": 500 + uid, "from": {"id": int(chat)}, "chat": {"id": int(chat)}, "text": text}})
 
     def press(self, data, chat=CHAT, update_id=None):
         uid = update_id or 100 + len(self.updates)
@@ -120,7 +128,8 @@ class ButtonTest(TelegramCase):
 
         self.poll()
 
-        self.assertIn("REVIEW", self.tg.sent("editMessageText")[-1]["text"])  # 두 번째는 '검토 대기에서만' 안내
+        self.assertIn("REVIEW", self.tg.sent("answerCallbackQuery")[-1]["text"])  # 두 번째는 '검토 대기에서만' 안내만
+        self.assertEqual(len(self.tg.sent("editMessageText")), 1)  # 메시지는 첫 처리 결과 그대로
 
     def test_offset_moves_forward(self):
         job_id = self.new_job()
@@ -151,7 +160,24 @@ class SeriesOrderTest(TelegramCase):
         self.poll()
 
         self.assertEqual(self.status(ep2), "REVIEW")
-        self.assertIn("1화를 먼저 승인", self.tg.sent("editMessageText")[-1]["text"])
+        # 2026-10-19 실제: 순서가 틀려 거절될 때 버튼까지 지워 다시 누를 수 없었다. 안내만 띄우고 메시지·버튼은 둔다
+        self.assertIn("1화를 먼저 승인", self.tg.sent("answerCallbackQuery")[-1]["text"])
+        self.assertEqual(self.tg.sent("editMessageText"), [])
+
+    def test_after_previous_is_approved_the_same_button_works(self):
+        self.post("/series", SERIES)
+        ep1 = self.post("/jobs", {"seriesId": "ai-office"}).json()["id"]
+        self.run_until(ep1, "review")
+        ep2 = self.post("/jobs", {"seriesId": "ai-office"}).json()["id"]
+        self.run_until(ep2, "review")
+        self.tg.press(f"a:{ep2}", update_id=1)
+        self.poll()
+
+        self.tg.press(f"a:{ep1}", update_id=2)
+        self.tg.press(f"a:{ep2}", update_id=3)
+        self.poll()
+
+        self.assertEqual([self.status(ep1), self.status(ep2)], ["APPROVED", "APPROVED"])
         self.assertIn("2화", self.tg.sent("sendMessage")[-1]["text"])  # 검토 대기 알림에 화 번호
         self.assertIn("1번째 시리즈 '민지의 AI 적응기'", self.tg.sent("sendMessage")[-1]["text"])  # 몇 번째 시리즈 (D33)
 
@@ -177,3 +203,200 @@ class PlanButtonTest(TelegramCase):
         self.poll()
 
         self.assertEqual(self.get(f"/series/{sid}").json()["status"], "APPROVED")
+
+
+class ReminderTest(TelegramCase):
+    """검토 대기가 오래 남으면 다시 알린다 (2026-10-19 사용자). 지금 승인할 수 있는 차례인 것만"""
+
+    def reminders(self):
+        return [m for m in self.tg.sent("sendMessage") if "다시 알림" in m["text"]]
+
+    def test_pending_review_is_sent_again_after_six_hours_once(self):
+        job_id = self.new_job()
+        self.run_until(job_id, "review")
+        poller = self.app.state.telegram_poller
+
+        poller.remind_due()
+        self.assertEqual(self.reminders(), [])  # 아직 6시간 전
+        self.clock.advance(hours=6, minutes=1)
+        poller.remind_due()
+        poller.remind_due()  # 같은 6시간 안에는 한 번만
+
+        (msg,) = self.reminders()
+        self.assertEqual(msg["reply_markup"]["inline_keyboard"][0][0]["callback_data"], f"a:{job_id}")
+
+    def test_episode_waiting_for_previous_is_not_reminded(self):
+        self.post("/series", SERIES)
+        ep1 = self.post("/jobs", {"seriesId": "ai-office"}).json()["id"]
+        self.run_until(ep1, "review")
+        ep2 = self.post("/jobs", {"seriesId": "ai-office"}).json()["id"]
+        self.run_until(ep2, "review")
+        self.clock.advance(hours=7)
+
+        self.app.state.telegram_poller.remind_due()
+
+        self.assertEqual([m["reply_markup"]["inline_keyboard"][0][0]["callback_data"] for m in self.reminders()], [f"a:{ep1}"])
+
+
+def plan(n, title="쿠버네티스 첫걸음"):
+    return {"title": title, "bible": {"premise": "p", "tone": "t"},
+            "episodes": [{"title": f"개념 {i}", "outline": "o"} for i in range(1, n + 1)]}
+
+
+class SeriesRequestTest(TelegramCase):
+    """다음 시리즈 계획 전에 텔레그램으로 주제·화 수를 묻는다 (2026-10-19 사용자)"""
+
+    def setUp(self):
+        self.llm = FakeLlm()
+        super().setUp()
+
+    def make_providers(self):
+        return FakeRegistry(self.llm)
+
+    def ask(self):
+        return self.post("/series/request", {"category": "ai-it"})
+
+    def proposed(self):
+        return self.get("/series?status=PROPOSED").json()["items"]
+
+    def test_question_is_sent_with_auto_and_skip_buttons(self):
+        res = self.ask()
+
+        self.assertEqual(res.json()["asked"], True, res.text)
+        (msg,) = self.tg.sent("sendMessage")
+        self.assertIn("주제", msg["text"])
+        self.assertEqual([b["callback_data"] for b in msg["reply_markup"]["inline_keyboard"][0]], ["q:auto", "q:skip"])
+
+    def test_asked_once_a_day(self):
+        self.ask()
+        again = self.ask()
+        self.clock.advance(days=1)
+        tomorrow = self.ask()
+
+        self.assertEqual((again.json()["asked"], again.json()["reason"]), (False, "asked_today"))
+        self.assertTrue(tomorrow.json()["asked"])
+        self.assertEqual(len(self.tg.sent("sendMessage")), 2)
+
+    def test_answer_with_theme_and_count_makes_plan(self):
+        self.llm.responses = [plan(4)]
+        self.ask()
+        self.tg.say("쿠버네티스 기초, 4화")
+
+        self.poll()
+
+        self.assertIn("쿠버네티스 기초", self.llm.last_user_text())
+        self.assertEqual(self.llm.requests[-1]["schema"]["properties"]["episodes"]["minItems"], 4)
+        (sid,) = [x["id"] for x in self.proposed()]
+        self.assertEqual(self.tg.sent("sendMessage")[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"], f"p:{sid}")
+
+    def test_count_defaults_to_ten(self):
+        self.llm.responses = [plan(10)]
+        self.ask()
+        self.tg.say("도커 입문")
+
+        self.poll()
+
+        self.assertEqual(self.llm.requests[-1]["schema"]["properties"]["episodes"]["minItems"], 10)
+        self.assertEqual(len(self.proposed()), 1)
+
+    def test_count_out_of_range_is_explained_and_still_waits(self):
+        self.ask()
+        self.tg.say("도커 입문, 50")
+        self.poll()
+
+        self.assertEqual(self.llm.requests, [])
+        self.assertIn("3~20", self.tg.sent("sendMessage")[-1]["text"])
+
+        self.llm.responses = [plan(5)]
+        self.tg.say("도커 입문, 5")
+        self.poll()
+        self.assertEqual(len(self.proposed()), 1)
+
+    def test_auto_button_makes_plan_without_theme(self):
+        self.llm.responses = [plan(10, "자동 제목")]
+        self.ask()
+        self.tg.press("q:auto")
+
+        self.poll()
+
+        self.assertNotIn("사용자가 정한 주제", self.llm.last_user_text())
+        self.assertEqual([x["title"] for x in self.proposed()], ["자동 제목"])
+
+    def test_skip_button_waits_until_tomorrow(self):
+        self.ask()
+        self.tg.press("q:skip")
+        self.poll()
+        self.tg.say("이건 답이 아님")  # 건너뛴 뒤의 글은 답으로 받지 않는다
+        self.poll()
+
+        self.assertEqual(self.llm.requests, [])
+        self.assertIn("건너", self.tg.sent("editMessageText")[-1]["text"])
+        self.assertFalse(self.ask().json()["asked"])
+        self.clock.advance(days=1)
+        self.assertTrue(self.ask().json()["asked"])
+
+    def test_series_command_works_any_time(self):
+        self.llm.responses = [plan(3)]
+        self.tg.say("/series 쿠버네티스 기초, 3")
+
+        self.poll()
+
+        self.assertIn("쿠버네티스 기초", self.llm.last_user_text())
+        self.assertEqual(len(self.proposed()), 1)
+
+    def test_other_chat_is_ignored(self):
+        self.ask()
+        self.tg.say("/series 다른 사람, 3", chat="999")
+        self.tg.say("다른 사람, 3", chat="999")
+
+        self.poll()
+
+        self.assertEqual(self.llm.requests, [])
+
+    def test_text_without_question_is_not_an_answer(self):
+        self.tg.say("안녕")
+
+        self.poll()
+
+        self.assertEqual(self.llm.requests, [])
+
+    def test_not_asked_while_plan_waits_for_approval(self):
+        self.llm.responses = [plan(3)]
+        self.tg.say("/series 도커 입문, 3")
+        self.poll()
+
+        res = self.ask()
+        self.tg.say("/series 또 하나, 3")
+        self.poll()
+
+        self.assertEqual((res.json()["asked"], res.json()["reason"]), (False, "plan_pending"))
+        self.assertEqual(len(self.proposed()), 1)
+        self.assertIn("승인 대기", self.tg.sent("sendMessage")[-1]["text"])
+
+    def test_busy_answer_is_kept_and_made_later(self):
+        self.llm.responses = [plan(3)]
+        self.ask()
+        self.tg.say("도커 입문, 3")
+        with self.app.state.runner.exclusive("다른 작업"):
+            self.poll()
+        self.assertEqual(self.proposed(), [])
+        self.assertIn("끝나면", self.tg.sent("sendMessage")[-1]["text"])
+
+        self.app.state.telegram_poller.make_wanted_plan()
+
+        self.assertEqual(len(self.proposed()), 1)
+
+    def test_waiting_question_survives_restart(self):
+        self.ask()
+        self.client.__exit__(None, None, None)  # 서버 재시작
+        self.llm.responses = [plan(3)]
+        self.app = create_app(self.settings, steps=self.steps, pipeline=self.pipeline, executor=inline_executor,
+                              notify=lambda url, payload: None, clock=self.clock, providers=self.make_providers(),
+                              telegram=self.make_telegram())
+        self.client = TestClient(self.app)
+        self.client.__enter__()
+
+        self.tg.say("도커 입문, 3")
+        self.poll()
+
+        self.assertEqual(len(self.proposed()), 1)

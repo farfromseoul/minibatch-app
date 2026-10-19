@@ -71,6 +71,8 @@ def create_app(settings: Optional[Settings] = None, *, steps: Optional[dict] = N
                                   steps={**default_steps(), **(steps or {})},  # 넘겨준 단계가 기본을 덮는다
                                   executor=executor, notify=notify, clock=clock,
                                   on_review=app.state.telegram.notify_review if app.state.telegram else None)
+        if app.state.telegram is not None:  # 텔레그램으로 받은 주제로 계획을 만들 때 쓴다 (D37)
+            app.state.telegram.attach(app.state.runner, registry)
         recovered = app.state.runner.recover()  # 규칙 8
         if recovered:
             log.warning("재시작 복구: 실행 중으로 남은 시도 %d건을 일시적 실패로 기록", recovered)

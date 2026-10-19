@@ -92,14 +92,14 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $('설정').first().json.api }}/series",
+        "url": "={{ $('설정').first().json.api }}/series/request",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ category: $('설정').first().json.category, episodeCount: 10 }) }}",
         "options": {
-          "timeout": 900000,
+          "timeout": 60000,
           "response": {
             "response": {
               "neverError": true,
@@ -108,8 +108,8 @@
           }
         }
       },
-      "id": "75e433ed-c6e2-58ad-909a-2facc1785244",
-      "name": "계획 만들기 (LLM)",
+      "id": "b8e3ce7e-d2d1-516f-9d17-d4d662f9ef40",
+      "name": "주제 묻기 (텔레그램)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -125,7 +125,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// 성공하면 job-api 가 [계획 승인] 버튼 메시지를 보낸다 (D28). 여기서는 실패만 알린다 (busy 는 다음 시각에 다시)\nconst r = $input.first().json;\nif (r.statusCode === 201 || r.body?.error?.code === 'busy') return [];\nreturn [{ json: { text: `⚠️ MiniBatch 시리즈 계획 만들기 실패 (${r.statusCode}): ${r.body?.error?.message || ''}` } }];"
+        "jsCode": "// 묻기는 job-api 가 텔레그램으로 보낸다 (D37). 여기서는 실패만 알린다 (오늘 이미 물었으면 asked=false 로 200)\nconst r = $input.first().json;\nif (r.statusCode === 200) return [];\nreturn [{ json: { text: `⚠️ MiniBatch 다음 시리즈 주제 묻기 실패 (${r.statusCode}): ${r.body?.error?.message || ''}` } }];"
       },
       "id": "82cf71d5-8b14-5fd7-a0df-0280088ecfa4",
       "name": "알림 문장",
@@ -330,7 +330,7 @@
         "operation": "completion",
         "respondWith": "text",
         "completionTitle": "승인 대기 계획이 없습니다",
-        "completionMessage": "남은 화가 10편보다 적어지면 매일 07시에 새 계획을 만듭니다.",
+        "completionMessage": "남은 화가 10편보다 적어지면 텔레그램으로 다음 시리즈 주제를 묻습니다(하루 한 번).",
         "options": {}
       },
       "id": "6805090a-7ec5-5c79-a17c-a4b4e32ebf0d",
@@ -501,14 +501,14 @@
       "main": [
         [
           {
-            "node": "계획 만들기 (LLM)",
+            "node": "주제 묻기 (텔레그램)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "계획 만들기 (LLM)": {
+    "주제 묻기 (텔레그램)": {
       "main": [
         [
           {

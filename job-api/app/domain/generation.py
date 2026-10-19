@@ -78,8 +78,10 @@ def next_series_key(s: Session, now: datetime) -> str:
 
 
 def generate_series_plan(s: Session, settings, now: datetime, llm: LlmEngine, *, key: str, category: str,
-                         title: Optional[str], count: int, bible: Optional[dict[str, Any]]) -> Series:
-    """title 이 없으면 LLM 이 제목도 정한다(D27 자동 운영). 예전 시리즈 제목을 주어 겹치지 않게 한다"""
+                         title: Optional[str], count: int, bible: Optional[dict[str, Any]],
+                         theme: Optional[str] = None) -> Series:
+    """title 이 없으면 LLM 이 제목도 정한다(D27 자동 운영). 예전 시리즈 제목을 주어 겹치지 않게 한다.
+    theme 은 사용자가 정한 시리즈 주제(텔레그램 입력, D37). 없으면 LLM 이 앞 시리즈를 이어 정한다"""
     cat = _category(settings, category)
     if not KEY.match(key):
         raise ApiError(422, "invalid_request", "key 는 영문 소문자·숫자·- 64자 이내")
@@ -91,10 +93,11 @@ def generate_series_plan(s: Session, settings, now: datetime, llm: LlmEngine, *,
     messages, _ = render_messages("series_plan", count=count, category_title=cat.get("title", category),
                        audience=cat.get("audience", ""),
                        title_line=f"'{title}'이라는" if title else "새",
+                       theme_line=f"사용자가 정한 주제(시리즈 전체를 이 주제 안에서 기획한다): {theme}" if theme else "",
                        title_rule="" if title else "- title: 시리즈 제목 한 줄. 아래 예전 시리즈와 주제·인물이 겹치지 않게\n",
                        recent="" if title or not recent else "예전 시리즈 제목:\n" + "\n".join(f"- {t}" for t in recent) + "\n",
                        given_bible=f"사용자가 정한 설정(그대로 쓴다): {json.dumps(bible, ensure_ascii=False)}" if bible else "",
-                       continuity=_continuity(s), used_topics="\n".join(f"- {t}" for t in used) or "- (없음)")
+                       continuity=_continuity(s, bool(theme)), used_topics="\n".join(f"- {t}" for t in used) or "- (없음)")
     st = {"type": "string"}
     schema = {"type": "object", "properties": {
         # 2026-10-17: 가상 인물(characters)을 없앴다. 진행자 한 명의 연속 강의형 (오글거림·이해 방해)
@@ -153,7 +156,7 @@ def _used_topics(s: Session, limit: int = 200) -> list[str]:
     return out
 
 
-def _continuity(s: Session) -> str:
+def _continuity(s: Session, user_theme: bool = False) -> str:
     """몇 번째 시리즈인지와 이어받을 바로 앞 시리즈 (D33: 앞 시리즈와 연관되게, 겹치지 않게)"""
     n = series_order.next_sequence(s)
     prev = series_order.previous(s)
@@ -163,8 +166,10 @@ def _continuity(s: Session) -> str:
     lines = "\n".join(f"- {e.number}화 {e.title}" for e in eps)
     premise = (prev.bible or {}).get("premise", "")
     return (f"이번이 {n}번째 시리즈다. 바로 앞 {series_order.label(s, prev)}(전제: {premise})에서 다룬 화:\n{lines}\n"
-            "이번 시리즈는 앞 시리즈를 본 시청자가 다음으로 궁금해할 주제로 잡는다: 앞 시리즈에서 배운 개념을 바탕으로 "
-            "한 단계 더 깊은 원리나 그 개념이 쓰이는 다음 영역으로 잇는다. 앞 시리즈의 개념을 다시 설명하는 화는 만들지 않는다.")
+            + ("주제는 사용자가 정했다. 앞 시리즈와 이어지는 개념이 있으면 이미 배운 것으로 두고 쓰되, "
+               "앞 시리즈의 개념을 다시 설명하는 화는 만들지 않는다." if user_theme else
+               "이번 시리즈는 앞 시리즈를 본 시청자가 다음으로 궁금해할 주제로 잡는다: 앞 시리즈에서 배운 개념을 바탕으로 "
+               "한 단계 더 깊은 원리나 그 개념이 쓰이는 다음 영역으로 잇는다. 앞 시리즈의 개념을 다시 설명하는 화는 만들지 않는다."))
 
 
 def approve_series_plan(s: Session, series: Series, now: datetime, episodes: Optional[list[dict]],
