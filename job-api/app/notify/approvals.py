@@ -24,7 +24,7 @@ from sqlalchemy import select
 from app.core.errors import ApiError
 from app.core.timeutil import kst_date
 from app.db.models import Episode, Job, Publication, Series
-from app.domain import generation, overview, review, series_order
+from app.domain import cancel as cancel_domain, generation, overview, review, series_order
 from app.publish.approve import approve_and_publish
 
 from .telegram import TelegramBot, TelegramError
@@ -105,7 +105,7 @@ class TelegramApprovals:
             text = "\n".join([head, *after, str((series.bible or {}).get("premise", ""))]
                              + [f"{e.number}. {e.title}" for e in eps])
         try:
-            self.bot.send(text, [("계획 승인", f"p:{series_id}")])
+            self.bot.send(text, [("계획 승인", f"p:{series_id}"), ("다른 주제로", f"pc:{series_id}")])
         except TelegramError as e:
             log.warning("텔레그램 보내기 실패: %s", e)
             return
@@ -148,6 +148,8 @@ class TelegramApprovals:
     def _apply(self, kind: str, target: str) -> str:
         if kind == "q":
             return self._question_button(target)
+        if kind == "pc":
+            return self._change_plan(target)
         if kind in ("ua", "up", "ux"):  # ASMR 채널 (D38): 업로드 승인, 공개 승인, 버리기
             if self.asmr is None:
                 return "ASMR 기능이 꺼져 있습니다"
@@ -208,19 +210,42 @@ class TelegramApprovals:
             st = self._load()
             if st.get("askedDate") == today:
                 return {"asked": False, "reason": "asked_today"}
-            with self.db() as s:
-                prev = series_order.previous(s)
-                head = f"📝 다음 시리즈를 준비할 차례입니다 ({series_order.next_sequence(s)}번째 시리즈)."
-                after = [f"앞 시리즈: {series_order.label(s, prev)}"] if prev is not None else []
-            text = "\n".join([head, *after, f"주제와 화 수를 답장해 주세요. {EXAMPLE}",
-                              f"화 수는 {MIN_COUNT}~{MAX_COUNT}(빼면 {DEFAULT_COUNT}). 언제든 /series 주제, 화수 로도 만들 수 있습니다."])
-            try:
-                sent = self.bot.send(text, [("자동으로 정하기", "q:auto"), ("오늘은 건너뛰기", "q:skip")])
-            except TelegramError as e:  # 묻지 못했으면 오늘 물은 것으로 치지 않는다 (다음 시각에 다시)
-                raise ApiError(502, "telegram_failed", f"텔레그램으로 묻지 못했다: {e}") from None
-            self._save({"askedDate": today, "waiting": True, "category": category, "count": count,
-                        "messageId": (sent or {}).get("message_id")})
+            self._send_question(category, count)
         return {"asked": True}
+
+    def _send_question(self, category: str, count: int) -> None:
+        """주제·화 수 질문을 보내고 '묻는 중'으로 적는다. _state_lock 안에서 부른다"""
+        today = kst_date(self.clock())
+        with self.db() as s:
+            prev = series_order.previous(s)
+            head = f"📝 다음 시리즈를 준비할 차례입니다 ({series_order.next_sequence(s)}번째 시리즈)."
+            after = [f"앞 시리즈: {series_order.label(s, prev)}"] if prev is not None else []
+        text = "\n".join([head, *after, f"주제와 화 수를 답장해 주세요. {EXAMPLE}",
+                          f"화 수는 {MIN_COUNT}~{MAX_COUNT}(빼면 {DEFAULT_COUNT}). 언제든 /series 주제, 화수 로도 만들 수 있습니다."])
+        try:
+            sent = self.bot.send(text, [("자동으로 정하기", "q:auto"), ("오늘은 건너뛰기", "q:skip")])
+        except TelegramError as e:  # 묻지 못했으면 오늘 물은 것으로 치지 않는다 (다음 시각에 다시)
+            raise ApiError(502, "telegram_failed", f"텔레그램으로 묻지 못했다: {e}") from None
+        st = self._load()
+        st.update({"askedDate": today, "waiting": True, "category": category, "count": count,
+                   "messageId": (sent or {}).get("message_id")})
+        st.pop("want", None)
+        self._save(st)
+
+    def _change_plan(self, series_id: str) -> str:
+        """[다른 주제로]: 승인 대기 계획을 취소하고 바로 주제·화 수를 묻는다 (2026-10-21 사용자)"""
+        with self.db() as s:
+            series = s.get(Series, series_id)
+            if series is None:
+                return f"시리즈가 없습니다: {series_id}"
+            if series.status != "PROPOSED":  # 버튼을 남겨 둔다(ApiError)
+                raise ApiError(409, "series_not_proposed", f"승인 대기 계획만 바꿀 수 있다. 지금: {series.status}")
+            cancel_domain.cancel_series(s, series, self.clock(), WHO, "텔레그램 [다른 주제로]")
+            title, category = series.title, series.category
+            s.commit()
+        with self._state_lock:
+            self._send_question(category, DEFAULT_COUNT)
+        return f"🔄 계획 취소: {title}. 새 주제를 물었습니다"
 
     def _handle_message(self, msg: dict[str, Any]) -> None:
         chat = str((msg.get("chat") or {}).get("id", ""))

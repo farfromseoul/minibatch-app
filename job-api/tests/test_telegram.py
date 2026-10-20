@@ -207,6 +207,54 @@ class PlanButtonTest(TelegramCase):
         self.assertEqual(self.get(f"/series/{sid}").json()["status"], "APPROVED")
 
 
+class ChangePlanTest(TelegramCase):
+    """계획 메시지의 [다른 주제로]: 그 계획을 취소하고 바로 주제·화 수를 묻는다 (2026-10-21 사용자: 텔레그램 안에서 끝내기)"""
+
+    def setUp(self):
+        self.llm = FakeLlm(PLAN, plan(3))
+        super().setUp()
+
+    def make_providers(self):
+        return FakeRegistry(self.llm)
+
+    def test_plan_message_has_change_button(self):
+        sid = self.post("/series", {"category": "ai-it", "episodeCount": 2}).json()["id"]
+
+        (msg,) = self.tg.sent("sendMessage")
+
+        self.assertEqual([b["callback_data"] for b in msg["reply_markup"]["inline_keyboard"][0]], [f"p:{sid}", f"pc:{sid}"])
+
+    def test_change_cancels_plan_and_asks_then_answer_makes_new_plan(self):
+        sid = self.post("/series", {"category": "ai-it", "episodeCount": 2}).json()["id"]
+        self.tg.press(f"pc:{sid}")
+        self.poll()
+
+        self.assertEqual(self.get(f"/series/{sid}").json()["status"], "CANCELLED")
+        question = self.tg.sent("sendMessage")[-1]
+        self.assertIn("주제", question["text"])
+        self.assertEqual([b["callback_data"] for b in question["reply_markup"]["inline_keyboard"][0]], ["q:auto", "q:skip"])
+
+        self.tg.say("도커 입문, 3")
+        self.poll()
+
+        proposed = self.get("/series?status=PROPOSED").json()["items"]
+        self.assertEqual(len(proposed), 1)
+        self.assertIn("도커 입문", self.llm.last_user_text())
+
+    def test_change_on_approved_plan_is_refused_and_button_stays(self):
+        sid = self.post("/series", {"category": "ai-it", "episodeCount": 2}).json()["id"]
+        self.tg.press(f"p:{sid}")
+        self.poll()
+        edits = len(self.tg.sent("editMessageText"))
+        self.tg.press(f"pc:{sid}")
+
+        self.poll()
+
+        self.assertEqual(self.get(f"/series/{sid}").json()["status"], "APPROVED")
+        self.assertIn("승인 대기", self.tg.sent("answerCallbackQuery")[-1]["text"])
+        self.assertEqual(len(self.tg.sent("editMessageText")), edits)
+
+
 class PlanReminderTest(TelegramCase):
     """승인 대기 계획을 하루에 한 번 다시 알린다 (2026-10-20 실제: 10-19 에 한 번 보낸 [계획 승인] 을 놓치자
     주제 질문도 막혀 다음 시리즈가 아무 알림 없이 멈췄다)"""
