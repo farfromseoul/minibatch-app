@@ -62,7 +62,7 @@ def story_for(s: Session, series_id: str, number: int, keep: int = 3, settings=N
     series = s.get(Series, series_id)
     eps = {e.number: e for e in s.scalars(select(Episode).where(Episode.series_id == series_id))}
     previous = [{"episode": n, "title": eps[n].title, "summary": _summary(settings, eps[n])}
-                for n in range(max(1, number - keep), number) if n in eps]
+                for n in range(max(1, number - keep), number) if n in eps and eps[n].status != "SKIPPED"]  # 건너뛴 화는 앞 이야기가 아니다
     nxt = eps.get(number + 1)
     return {
         "id": series.id,

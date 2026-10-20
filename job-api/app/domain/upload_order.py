@@ -15,7 +15,7 @@ from app.db.models import Episode, Job, Publication, Series, StepRun
 
 from . import series_order
 
-from .status import RUNNABLE
+from .status import EP_DONE, RUNNABLE
 
 
 def waiting_for_upload(job: Job) -> bool:
@@ -32,7 +32,7 @@ def upload_blocker(s: Session, job: Job) -> Optional[str]:
         return series_order.upload_blocker(s, series) if series is not None else None
     n = job.episode_number - 1
     prev = s.scalar(select(Episode).where(Episode.series_id == job.series_id, Episode.number == n))
-    if prev is not None and prev.status == "APPROVED":
+    if prev is not None and prev.status in EP_DONE:
         return None
     pub = s.get(Publication, prev.job_id) if prev is not None and prev.job_id else None
     if pub is not None and pub.video_id:

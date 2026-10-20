@@ -17,7 +17,7 @@ from app.core.timeutil import to_utc_naive
 from app.db.models import Episode, Job, Publication, Series
 
 from . import series_order
-from .status import set_status
+from .status import EP_DONE, set_status
 
 
 def _episode(s: Session, job: Job) -> Optional[Episode]:
@@ -32,7 +32,7 @@ def approve(s: Session, settings, job: Job, now: datetime, approved_by: str, pub
     ep = _episode(s, job)
     if ep is not None and ep.number > 1:  # 미리 만든 화(D27)도 승인·공개는 화 순서대로
         prev = s.scalar(select(Episode).where(Episode.series_id == job.series_id, Episode.number == ep.number - 1))
-        if prev is None or prev.status != "APPROVED":
+        if prev is None or prev.status not in EP_DONE:
             raise ApiError(409, "previous_episode_not_approved", f"{ep.number - 1}화를 먼저 승인한다")
     elif ep is not None:  # 다음 시리즈 1화는 앞 시리즈가 끝난 뒤에 공개 (D33)
         blocker = series_order.approval_blocker(s, s.get(Series, job.series_id))
@@ -47,7 +47,7 @@ def approve(s: Session, settings, job: Job, now: datetime, approved_by: str, pub
     if ep is not None:
         ep.status = "APPROVED"
         ep.summary, ep.next_teaser = _story_from_script(settings, job.id)
-        _finish_series_if_done(s, job.series_id)
+        finish_series_if_done(s, job.series_id)
 
 
 def reject(s: Session, job: Job, now: datetime, rejected_by: str, reason: str) -> None:
@@ -77,7 +77,7 @@ def _story_from_script(settings, job_id: str) -> tuple[Optional[str], Optional[s
     return data.get("episodeSummary"), data.get("nextTeaser")
 
 
-def _finish_series_if_done(s: Session, series_id: str) -> None:
+def finish_series_if_done(s: Session, series_id: str) -> None:
     statuses = s.scalars(select(Episode.status).where(Episode.series_id == series_id)).all()
-    if statuses and all(st == "APPROVED" for st in statuses):
+    if statuses and all(st in EP_DONE for st in statuses):
         s.get(Series, series_id).status = "DONE"

@@ -4,7 +4,12 @@
 export function decide(job, pipeline, opt) {
   const last = {};
   for (const r of job.steps || []) last[r.step] = r; // 시도 순서대로 오므로 마지막이 지금 시도
-  const resets = (job.events || []).filter((e) => (e.reason || "").startsWith("reset from=")).length;
+  // 되돌리기 횟수는 마지막 '개요 고침'(텔레그램 [개요 고쳐 다시], 2026-10-21) 뒤부터 센다. 고친 직후의 되돌리기(from=topic)는 빼고
+  const events = job.events || [];
+  const fixed = events.map((e) => (e.reason || "").startsWith("개요 고침")).lastIndexOf(true);
+  let after = fixed >= 0 ? events.slice(fixed + 1) : events;
+  if (fixed >= 0 && (after[0]?.reason || "").startsWith("reset from=")) after = after.slice(1);
+  const resets = after.filter((e) => (e.reason || "").startsWith("reset from=")).length;
   const firstFailed = () => pipeline.map((s) => last[s]).find((r) => r && r.status === "failed");
 
   if (job.status === "REVIEW") return { action: "done" };
@@ -19,6 +24,10 @@ export function decide(job, pipeline, opt) {
     if (f.kind === "deterministic" && f.retryFrom) {
       if (resets < opt.maxResets) {
         return { action: "reset", from: f.retryFrom, waitSec: 2, message: `${what} → ${f.retryFrom} 부터 다시 (${resets + 1}번째): ${f.error}` };
+      }
+      if (f.step === "review" && (f.error || "").startsWith("검토 점수 미달")) {
+        // job-api 가 텔레그램으로 [개요 고쳐 다시][건너뛰기] 를 묻는다. 실패 알림을 겹쳐 보내지 않는다 (2026-10-21)
+        return { action: "stop", message: `대본 검토 ${resets + 1}번 미달: 텔레그램에서 [개요 고쳐 다시] 또는 [건너뛰기]` };
       }
       return { action: "fail", message: `${what}, 되돌리기 ${resets}번 뒤에도: ${f.error}` };
     }

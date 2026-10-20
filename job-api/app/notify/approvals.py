@@ -24,7 +24,8 @@ from sqlalchemy import select
 from app.core.errors import ApiError
 from app.core.timeutil import kst_date
 from app.db.models import Episode, Job, Publication, Series
-from app.domain import cancel as cancel_domain, generation, overview, review, series_order
+from app.domain import cancel as cancel_domain, generation, overview, review, series_order, stuck
+from app.domain.status import EP_DONE
 from app.publish.approve import approve_and_publish
 
 from .telegram import TelegramBot, TelegramError
@@ -150,6 +151,10 @@ class TelegramApprovals:
             return self._question_button(target)
         if kind == "pc":
             return self._change_plan(target)
+        if kind == "ro":
+            return self._fix_outline(target)
+        if kind == "rs":
+            return self._skip_episode(target)
         if kind in ("ua", "up", "ux"):  # ASMR 채널 (D38): 업로드 승인, 공개 승인, 버리기
             if self.asmr is None:
                 return "ASMR 기능이 꺼져 있습니다"
@@ -382,8 +387,55 @@ class TelegramApprovals:
             self.notify_review(job_id, reminder=True)
             self._reminded[job_id] = now
         self._remind_plans(now)
+        self._ask_stuck(now)
         if self.asmr is not None:
             self.asmr.remind_due()
+
+    # ---------- 대본 검토에서 계속 떨어진 화 (2026-10-21)
+
+    def _ask_stuck(self, now) -> None:
+        """검토가 3번 연속 점수 미달인 화에 [개요 고쳐 다시][건너뛰기] 를 묻는다 (작업마다 하루 한 번)"""
+        with self.db() as s:
+            items = []
+            for x in stuck.find_stuck(s):
+                job = x["job"]
+                series = s.get(Series, job.series_id)
+                items.append((job.id, f"{series_order.label(s, series)} {job.episode_number}화 {job.topic}", x["errors"][-1]))
+        asked = self._load().get("stuckAsked") or {}
+        for job_id, head, last in items:
+            if job_id in asked and (now - datetime.fromisoformat(asked[job_id])).total_seconds() < PLAN_REMIND_SEC:
+                continue
+            text = (f"✍️ 대본 검토 {stuck.STUCK_AFTER}번 연속 미달: {head}\n마지막 검토 의견: {last[:600]}\n"
+                    "[개요 고쳐 다시]: 검토 의견으로 개요를 고쳐 대본부터 다시 만들고 승인을 요청합니다\n"
+                    "[건너뛰기]: 이 화를 빼고 다음 화로 넘어갑니다")
+            try:
+                self.bot.send(text, [("개요 고쳐 다시", f"ro:{job_id}"), ("건너뛰기", f"rs:{job_id}")])
+            except TelegramError as e:
+                log.warning("텔레그램 보내기 실패: %s", e)
+                continue
+            sent = now.isoformat()
+            self._edit_state(lambda st, j=job_id: st.setdefault("stuckAsked", {}).__setitem__(j, sent))
+
+    def _fix_outline(self, job_id: str) -> str:
+        if self.runner is None or self.providers is None:
+            raise ApiError(503, "llm_unavailable", "LLM 설정이 없어 개요를 고칠 수 없다")
+        llm = self.providers.llm("outline_fix")  # 따로 정하지 않으면 대본 단계 제공자 (Codex)
+        with self.runner.exclusive("개요 고치기"), self.db() as s:  # 제작 중이면 busy → 버튼을 남겨 다시 누르게
+            new = stuck.revise_outline(s, self.clock(), llm, job_id)
+            job = s.get(Job, job_id)
+            head = f"{job.episode_number}화 {job.topic}"
+            s.commit()
+        self.runner.reset(job_id, "topic")  # 주제 단계가 고친 개요를 다시 읽는다 → 생산 워크플로가 대본부터 다시
+        self._edit_state(lambda st: (st.get("stuckAsked") or {}).pop(job_id, None))
+        return f"✍️ {head} 개요를 고쳤습니다. 다음 생산 시각에 대본부터 다시 만들고 승인을 요청합니다.\n새 개요: {new[:800]}"
+
+    def _skip_episode(self, job_id: str) -> str:
+        with self.db() as s:
+            ep = stuck.skip_episode(s, self.clock(), job_id, WHO)
+            head = f"{ep.number}화 {ep.title}"
+            s.commit()
+        self._edit_state(lambda st: (st.get("stuckAsked") or {}).pop(job_id, None))
+        return f"⏭ {head} 건너뜀. 다음 생산 시각에 다음 화를 만듭니다"
 
     def _remind_plans(self, now) -> None:
         """승인 대기 계획을 하루에 한 번 다시 보낸다. 보낸 기록이 없으면(기록 전에 만든 계획) 바로 (2026-10-20 실제: 놓친 계획이 그대로 멈춤)"""
@@ -405,7 +457,7 @@ class TelegramApprovals:
             return True
         if ep.number > 1:
             prev = s.scalar(select(Episode).where(Episode.series_id == job.series_id, Episode.number == ep.number - 1))
-            return prev is not None and prev.status == "APPROVED"
+            return prev is not None and prev.status in EP_DONE
         series = s.get(Series, job.series_id)
         return series is None or series_order.approval_blocker(s, series) is None
 

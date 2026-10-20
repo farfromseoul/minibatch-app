@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 from app.db.models import Job, JobEvent
 
 RUNNABLE = {"PENDING", "RUNNING", "WAITING"}  # 단계를 요청할 수 있는 상태
+# 끝난 화: 승인(공개)됐거나, 검토를 넘지 못해 건너뛴 화 (2026-10-21). 다음 화 만들기·승인·업로드 순서·시리즈 완료가 같이 쓴다
+EP_DONE = ("APPROVED", "SKIPPED")
 RESETTABLE = {"PENDING", "RUNNING", "WAITING", "FAILED", "REVIEW", "REJECTED"}
 
 

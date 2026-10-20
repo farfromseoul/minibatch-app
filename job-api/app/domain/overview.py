@@ -71,7 +71,9 @@ def job_label(s: Session, job: Job) -> str:
 
 def _episode(s: Session, e: Episode) -> dict[str, Any]:
     job = s.get(Job, e.job_id) if e.job_id else None
-    if job is not None:
+    if e.status == "SKIPPED":
+        state, label = "SKIPPED", "⏭ 건너뜀"
+    elif job is not None:
         state, label = job.status, job_label(s, job)
     else:
         state = e.status

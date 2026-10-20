@@ -88,3 +88,20 @@ test("너무 오래 돌면 알림 (n8n 실행이 끝없이 이어지지 않게)"
   assert.equal(d.action, "fail");
   assert.match(d.message, /오래/);
 });
+
+// 2026-10-21: 대본 검토가 점수 미달로 세 번 떨어지면 job-api 가 텔레그램으로 [개요 고쳐 다시][건너뛰기] 를 묻는다.
+// 생산 워크플로는 실패 알림을 겹쳐 보내지 않고 조용히 끝낸다
+test("검토 점수 미달로 되돌리기를 다 쓰면 조용히 끝 (텔레그램 질문이 따로 간다)", () => {
+  const f = run("review", "failed", { kind: "deterministic", retryFrom: "script", error: "검토 점수 미달: 구체성 2점" });
+  const j = job("FAILED", [run("topic", "succeeded"), run("script", "succeeded"), f],
+                [{ reason: "reset from=script" }, { reason: "reset from=script" }]);
+  assert.equal(decide(j, P, opt).action, "stop");
+});
+
+test("개요를 고친 뒤에는 되돌리기 횟수를 새로 센다", () => {
+  const f = run("review", "failed", { kind: "deterministic", retryFrom: "script", error: "검토 점수 미달: 구체성 2점" });
+  const j = job("FAILED", [run("topic", "succeeded"), run("script", "succeeded"), f],
+                [{ reason: "reset from=script" }, { reason: "reset from=script" }, { reason: "개요 고침: 이전 개요: …" },
+                 { reason: "reset from=topic" }]);
+  assert.equal(decide(j, P, opt).action, "reset");
+});

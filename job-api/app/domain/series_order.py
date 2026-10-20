@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 
 from app.db.models import Episode, Job, Publication, Series
 
+from .status import EP_DONE
+
 # 순번을 매기는 시리즈: 승인된 뒤의 상태. 취소(CANCELLED)·승인 대기(PROPOSED)는 세지 않는다
 COUNTED = ("APPROVED", "ACTIVE", "PAUSED", "DONE")
 PRODUCED = ("REVIEW", "APPROVED", "SCHEDULED", "PUBLISHED")  # jobs.PRODUCED 와 같다 (순환 import 를 피해 둔다)
@@ -54,7 +56,7 @@ def _episodes(s: Session, series: Series) -> list[Episode]:
 
 
 def _made(s: Session, ep: Episode) -> bool:
-    if ep.status == "APPROVED":
+    if ep.status in EP_DONE:
         return True
     job = s.get(Job, ep.job_id) if ep.job_id else None
     if job is None:
@@ -94,6 +96,6 @@ def upload_blocker(s: Session, series: Series) -> Optional[str]:
         return None
     last = eps[-1]
     pub = s.get(Publication, last.job_id) if last.job_id else None
-    if last.status == "APPROVED" or (pub is not None and pub.video_id):
+    if last.status in EP_DONE or (pub is not None and pub.video_id):
         return None
     return f"{label(s, prev)} {last.number}화가 아직 업로드되지 않았다. 앞 시리즈를 올린 뒤에 1화를 올린다 (D33)"

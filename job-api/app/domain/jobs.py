@@ -15,6 +15,7 @@ from app.core.timeutil import kst_date, kst_day_start_utc
 from app.db.models import Episode, Job, JobEvent, Series, Topic
 
 from . import series_order
+from .status import EP_DONE
 from .text import normalize_topic
 from .upload_order import waiting_for_upload
 
@@ -76,7 +77,7 @@ def _next_episode(s: Session, series: Series) -> Episode:
         prev = s.scalar(select(Episode).where(Episode.series_id == series.id, Episode.number == ep.number - 1))
         prev_job = s.get(Job, prev.job_id) if prev is not None and prev.job_id else None
         produced = prev_job is not None and (prev_job.status in PRODUCED or waiting_for_upload(prev_job))
-        if prev is None or (prev.status != "APPROVED" and not produced):
+        if prev is None or (prev.status not in EP_DONE and not produced):
             raise ApiError(409, "previous_episode_not_ready",
                            f"{ep.number - 1}화가 다 만들어진(qc 통과) 뒤에 {ep.number}화를 만든다 (D27·D31)")
     else:
