@@ -207,6 +207,50 @@ class PlanButtonTest(TelegramCase):
         self.assertEqual(self.get(f"/series/{sid}").json()["status"], "APPROVED")
 
 
+class PlanReminderTest(TelegramCase):
+    """승인 대기 계획을 하루에 한 번 다시 알린다 (2026-10-20 실제: 10-19 에 한 번 보낸 [계획 승인] 을 놓치자
+    주제 질문도 막혀 다음 시리즈가 아무 알림 없이 멈췄다)"""
+
+    def make_providers(self):
+        return FakeRegistry(FakeLlm(PLAN))
+
+    def plan_messages(self):
+        return [m for m in self.tg.sent("sendMessage") if "계획 승인 필요" in m["text"]]
+
+    def test_waiting_plan_is_sent_again_after_a_day_once(self):
+        sid = self.post("/series", {"category": "ai-it", "episodeCount": 2}).json()["id"]
+        poller = self.app.state.telegram_poller
+
+        poller.remind_due()
+        self.assertEqual(len(self.plan_messages()), 1)  # 하루 안에는 다시 보내지 않는다
+        self.clock.advance(hours=24, minutes=1)
+        poller.remind_due()
+        poller.remind_due()
+
+        msgs = self.plan_messages()
+        self.assertEqual(len(msgs), 2)
+        self.assertIn("다시 알림", msgs[-1]["text"])
+        self.assertEqual(msgs[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"], f"p:{sid}")
+
+    def test_plan_without_sent_record_is_sent_right_away(self):
+        self.post("/series", {"category": "ai-it", "episodeCount": 2})
+        (self.settings.data_dir / "telegram" / "series_request.json").unlink()  # 보낸 기록이 생기기 전에 만든 계획
+
+        self.app.state.telegram_poller.remind_due()
+
+        self.assertEqual(len(self.plan_messages()), 2)
+
+    def test_approved_plan_is_not_reminded(self):
+        sid = self.post("/series", {"category": "ai-it", "episodeCount": 2}).json()["id"]
+        self.tg.press(f"p:{sid}")
+        self.poll()
+        self.clock.advance(days=2)
+
+        self.app.state.telegram_poller.remind_due()
+
+        self.assertEqual(len(self.plan_messages()), 1)
+
+
 class ReminderTest(TelegramCase):
     """검토 대기가 오래 남으면 다시 알린다 (2026-10-19 사용자). 지금 승인할 수 있는 차례인 것만"""
 

@@ -26,7 +26,7 @@ from app.core.errors import ApiError
 from app.core.timeutil import kst_day_start_utc
 from app.db.models import AsmrVideo
 from app.notify.telegram import TelegramError
-from app.pipeline.steps.publishing import next_quota_reset
+from app.pipeline.steps.publishing import quota_retry_at
 from app.youtube.client import YouTubeError
 
 log = logging.getLogger("job-api.asmr")
@@ -230,9 +230,9 @@ class AsmrService:
             self._send(f"⚠️ {HEAD} 업로드 실패: {v.title}\n{e.message}",
                        [("다시 업로드", f"ua:{v.id}"), ("버리기", f"ux:{v.id}")])
             return
-        if e.kind == "quota" and e.reason != "uploadLimitExceeded":
-            v.retry_at = datetime.strptime(next_quota_reset(now.replace(tzinfo=timezone.utc)), "%Y-%m-%dT%H:%M:%SZ")
-        else:  # 채널 업로드 한도는 지난 24시간 기준이라 1시간마다 (MiniBatch 2026-10-19 실제), 일시 오류도 1시간 뒤
+        if e.kind == "quota":  # 채널 업로드 한도는 1시간 뒤, API 할당량은 리셋 뒤 (MiniBatch 생산과 같은 규칙)
+            v.retry_at = datetime.strptime(quota_retry_at(e.reason, now.replace(tzinfo=timezone.utc)), "%Y-%m-%dT%H:%M:%SZ")
+        else:  # 일시 오류는 1시간 뒤
             v.retry_at = now + timedelta(hours=1)
         if first:
             self._send(f"{HEAD} 업로드를 미룹니다({e.kind}): {v.title}\n{e.message}\n다음 시도: 한국 시각 "

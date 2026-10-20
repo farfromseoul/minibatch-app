@@ -89,6 +89,19 @@ def next_quota_reset(now: Optional[datetime] = None) -> str:
     return nxt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def quota_retry_at(reason: Optional[str], now: Optional[datetime] = None) -> str:
+    """한도에 걸린 업로드를 언제 다시 할지 (UTC, ...Z).
+
+    채널 업로드 한도(uploadLimitExceeded)는 지난 24시간 기준이라 몇 시간 만에 풀린다 → 1시간 뒤.
+    API 할당량(quotaExceeded 등)은 태평양 자정에 다시 찬다 → 리셋 뒤.
+    2026-10-20: 둘 다 리셋 뒤로 잡아, 한도가 풀렸는데도 생산 워크플로가 다음 날 16:05 까지 업로드를 건너뛰었다.
+    """
+    now = now or datetime.now(timezone.utc)
+    if reason == "uploadLimitExceeded":
+        return (now.astimezone(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return next_quota_reset(now)
+
+
 def _description(script: dict[str, Any], playlist_id: Optional[str], credits: Optional[list] = None) -> str:
     parts = [p for p in (script.get("hook"), script.get("summary")) if p]
     tags = " ".join(h if h.startswith("#") else f"#{h}" for h in script.get("hashtags", []))
@@ -116,7 +129,7 @@ class UploadStep:
         try:
             self._run(ctx)
         except YouTubeError as e:
-            raise StepFailure(e.kind, e.message, retry_at=next_quota_reset() if e.kind == "quota" else None) from e
+            raise StepFailure(e.kind, e.message, retry_at=quota_retry_at(e.reason) if e.kind == "quota" else None) from e
 
     def _run(self, ctx: StepContext) -> None:
         job = ctx.read_json("job.json")

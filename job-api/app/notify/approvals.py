@@ -15,6 +15,7 @@ import json
 import logging
 import re
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -32,6 +33,7 @@ log = logging.getLogger("job-api.telegram")
 WHO = "텔레그램"
 REMIND_SEC = 6 * 3600  # 검토 대기 다시 알림 간격
 MAX_REMIND = 5         # 한 번에 다시 보내는 최대 수
+PLAN_REMIND_SEC = 24 * 3600  # 승인 대기 계획 다시 알림 간격
 DEFAULT_COUNT, MIN_COUNT, MAX_COUNT = 10, 3, 20  # 시리즈 화 수 (D37)
 COUNT = re.compile(r"^(\d+)\s*(화|편)?$")
 EXAMPLE = "예) 쿠버네티스 기초, 8"
@@ -91,14 +93,14 @@ class TelegramApprovals:
             text = "\n".join(lines)
         self._safe_send(text, [("승인(공개)", f"a:{job_id}"), ("반려", f"r:{job_id}")])
 
-    def notify_plan(self, series_id: str) -> None:
+    def notify_plan(self, series_id: str, reminder: bool = False) -> None:
         with self.db() as s:
             series = s.get(Series, series_id)
             if series is None or series.status != "PROPOSED":
                 return
             eps = s.scalars(select(Episode).where(Episode.series_id == series_id).order_by(Episode.number)).all()
             prev = series_order.previous(s)
-            head = f"📝 새 시리즈 계획 승인 필요 ({series_order.next_sequence(s)}번째 시리즈): {series.title}"
+            head = ("⏰ 다시 알림 · " if reminder else "") + f"📝 새 시리즈 계획 승인 필요 ({series_order.next_sequence(s)}번째 시리즈): {series.title}"
             after = [f"앞 시리즈: {series_order.label(s, prev)}"] if prev is not None else []
             text = "\n".join([head, *after, str((series.bible or {}).get("premise", ""))]
                              + [f"{e.number}. {e.title}" for e in eps])
@@ -354,8 +356,19 @@ class TelegramApprovals:
         for job_id in due[:MAX_REMIND]:
             self.notify_review(job_id, reminder=True)
             self._reminded[job_id] = now
+        self._remind_plans(now)
         if self.asmr is not None:
             self.asmr.remind_due()
+
+    def _remind_plans(self, now) -> None:
+        """승인 대기 계획을 하루에 한 번 다시 보낸다. 보낸 기록이 없으면(기록 전에 만든 계획) 바로 (2026-10-20 실제: 놓친 계획이 그대로 멈춤)"""
+        with self.db() as s:
+            ids = list(s.scalars(select(Series.id).where(Series.status == "PROPOSED").order_by(Series.created_at)))
+        sent = self.plan_sent()
+        for sid in ids:
+            last = sent.get(sid)
+            if last is None or (now - datetime.fromisoformat(last)).total_seconds() >= PLAN_REMIND_SEC:
+                self.notify_plan(sid, reminder=last is not None)
 
     @staticmethod
     def _approvable(s, job: Job) -> bool:

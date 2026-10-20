@@ -270,6 +270,28 @@ class UploadTest(PublishCase):
         last = self.get(f"/jobs/{job_id}").json()["steps"][-1]
         self.assertEqual((last["step"], last["retryAt"]), ("upload", st["retryAt"]))
 
+    def test_channel_upload_limit_retries_in_an_hour(self):
+        """채널 업로드 한도는 지난 24시간 기준이라 몇 시간 만에 풀린다. 다음 날 16:05 까지 기다리면 하루를 버린다
+        (2026-10-20 실제: 한도가 풀렸는데 생산 워크플로가 다음 날까지 9화를 건너뜀). 1시간 뒤 다시"""
+        import datetime as dt
+        self.yt.fail["upload_video"] = YouTubeError("quota", "업로드 한도", 400, "uploadLimitExceeded")
+        job_id = self.new_job()
+        before = dt.datetime.now(dt.timezone.utc)
+
+        self.run_until(job_id, "upload")
+
+        retry = dt.datetime.strptime(self.status(job_id, "upload")["retryAt"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+        self.assertTrue(dt.timedelta(minutes=55) <= retry - before <= dt.timedelta(minutes=65), retry - before)
+
+    def test_api_quota_waits_until_reset(self):
+        from app.pipeline.steps.publishing import next_quota_reset
+        self.yt.fail["upload_video"] = YouTubeError("quota", "할당량", 403, "quotaExceeded")
+        job_id = self.new_job()
+
+        self.run_until(job_id, "upload")
+
+        self.assertEqual(self.status(job_id, "upload")["retryAt"], next_quota_reset())
+
     def test_expired_token_is_deterministic(self):
         self.yt.fail["upload_video"] = YouTubeError("deterministic", "갱신 토큰을 쓸 수 없다(invalid_grant) 15번")
         job_id = self.new_job()
