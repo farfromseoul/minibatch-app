@@ -77,6 +77,12 @@ class AppTestCase(unittest.TestCase):
     def make_telegram(self):
         return None  # 텔레그램 승인 테스트는 가짜 서버를 쓰는 TelegramBot 을 넣는다
 
+    def make_asmr_youtube(self):
+        return None  # ASMR 채널 테스트는 가짜 YouTube 를 돌려주는 함수를 넣는다
+
+    def make_asmr_probe(self):
+        return None
+
     def extra_settings(self):
         return {}
 
@@ -111,6 +117,8 @@ class AppTestCase(unittest.TestCase):
             providers=self.make_providers(),
             youtube=self.make_youtube(),
             telegram=self.make_telegram(),
+            asmr_youtube=self.make_asmr_youtube(),
+            asmr_probe=self.make_asmr_probe(),
         )
         self.client = TestClient(self.app)
         self.client.__enter__()  # lifespan(DB 이전, 재시작 복구) 실행

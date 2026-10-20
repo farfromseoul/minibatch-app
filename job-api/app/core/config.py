@@ -29,6 +29,11 @@ class Settings:
     # 텔레그램 승인 (D28). 토큰 파일이나 chat id 가 없으면 이 기능만 꺼진다. chat id 는 비밀 값이 아니다
     telegram_token_file: Path = Path("/run/secrets/telegram_bot_token")
     telegram_chat_id: str = ""
+    # ASMR 채널 (D38): 사용자가 넣은 영상을 승인받아 올린다. 인증 파일은 MiniBatch 와 따로(다른 Google Cloud 프로젝트)
+    asmr_youtube_client_file: Path = Path("/run/minibatch/asmr-youtube/client_secret.json")
+    asmr_youtube_token_file: Path = Path("/run/minibatch/asmr-youtube/youtube_token.json")
+    asmr_channel_id: str = ""  # 비어 있으면 올리지 않는다(다른 채널에 올리는 사고 방지). 비밀 값이 아니다
+    asmr_daily_upload_limit: int = 3
     extra: dict = field(default_factory=dict)
 
     @classmethod
@@ -50,11 +55,19 @@ class Settings:
             youtube_token_file=Path(env.get("MINIBATCH_YOUTUBE_TOKEN_FILE", "/run/minibatch/youtube-token/youtube_token.json")),
             telegram_token_file=Path(env.get("MINIBATCH_TELEGRAM_TOKEN_FILE", "/run/secrets/telegram_bot_token")),
             telegram_chat_id=env.get("MINIBATCH_TELEGRAM_CHAT_ID", ""),
+            asmr_youtube_client_file=Path(env.get("MINIBATCH_ASMR_YOUTUBE_CLIENT_FILE", "/run/minibatch/asmr-youtube/client_secret.json")),
+            asmr_youtube_token_file=Path(env.get("MINIBATCH_ASMR_YOUTUBE_TOKEN_FILE", "/run/minibatch/asmr-youtube/youtube_token.json")),
+            asmr_channel_id=env.get("MINIBATCH_ASMR_CHANNEL_ID", ""),
+            asmr_daily_upload_limit=int(env.get("MINIBATCH_ASMR_DAILY_UPLOAD_LIMIT", "3")),
         )
 
     @property
     def jobs_dir(self) -> Path:
         return self.data_dir / "jobs"
+
+    @property
+    def asmr_dir(self) -> Path:
+        return self.data_dir / "asmr"
 
     def category_file(self, key: str) -> Path:
         return self.content_dir / "categories" / f"{key}.yaml"

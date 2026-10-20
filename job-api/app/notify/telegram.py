@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any, Optional
@@ -49,6 +50,23 @@ class TelegramBot:
         if buttons:
             body["reply_markup"] = {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in buttons]]}
         return self._call("sendMessage", body)
+
+    def send_video(self, path: Path, caption: str, buttons: Optional[list[tuple[str, str]]] = None) -> Any:
+        """영상 파일을 미리보기로 보낸다 (ASMR 업로드 승인, D38). 봇이 보낼 수 있는 파일은 50MB 까지"""
+        data: dict[str, Any] = {"chat_id": self.chat_id, "caption": caption[:1000], "supports_streaming": "true"}
+        if buttons:
+            data["reply_markup"] = json.dumps({"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in buttons]]},
+                                              ensure_ascii=False)
+        try:
+            with Path(path).open("rb") as fh:
+                res = self._http.post(f"{self._base}/sendVideo", data=data,
+                                      files={"video": (Path(path).name, fh, "video/mp4")}, timeout=120)
+        except httpx.HTTPError as e:
+            raise TelegramError(f"sendVideo 연결 실패: {type(e).__name__}") from None  # 주소(토큰)를 남기지 않는다
+        body = res.json() if res.content else {}
+        if res.status_code != 200 or not body.get("ok"):
+            raise TelegramError(f"sendVideo {res.status_code} {str(body.get('description', ''))[:200]}")
+        return body.get("result")
 
     def get_updates(self, offset: int, timeout: int = 30) -> list[dict[str, Any]]:
         return self._call("getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["callback_query", "message"]},

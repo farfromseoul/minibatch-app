@@ -136,3 +136,29 @@ class Publication(Base):
     approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     # 올린 영상 파일의 해시. 같은 파일이면 upload 재시도 때 다시 올리지 않는다(다시 렌더하면 다르다)
     uploaded_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+
+class AsmrVideo(Base):
+    """ASMR 채널에 올릴, 사용자가 넣은 영상 하나 (D38). 파일은 상태에 맞는 폴더(inbox·uploaded·published·rejected)에 있다."""
+
+    __tablename__ = "asmr_video"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)  # asmr-YYYYMMDD-NN (파일 이름 앞부분)
+    file_name: Mapped[str] = mapped_column(String(300))  # 디스크에 있는 그대로의 이름
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text)
+    size: Mapped[int] = mapped_column(Integer)
+    probe: Mapped[dict[str, Any]] = mapped_column(JSON)
+    # WAITING_UPLOAD | QUEUED | UPLOADED | PUBLISHED | REJECTED | INVALID | FAILED
+    status: Mapped[str] = mapped_column(String(20), index=True)
+    video_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    retry_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    approved_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    upload_approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    uploaded_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    published_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    rejected_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    notified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # 마지막 승인 요청 알림 (다시 알림 기준)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)

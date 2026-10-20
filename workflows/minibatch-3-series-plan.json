@@ -74,7 +74,9 @@
           "id": "mbJobApi0000001",
           "name": "MiniBatch job-api"
         }
-      }
+      },
+      "notes": "GET /series: 시리즈별 남은 화 수",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -87,7 +89,9 @@
       "position": [
         660,
         100
-      ]
+      ],
+      "notes": "승인 대기 계획이 있으면 멈춤. 남은 화 10 미만이면 진행",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -121,7 +125,9 @@
           "id": "mbJobApi0000001",
           "name": "MiniBatch job-api"
         }
-      }
+      },
+      "notes": "POST /series/request: 오늘 안 물었으면 텔레그램으로 묻는다(하루 한 번)",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -134,7 +140,9 @@
       "position": [
         1100,
         100
-      ]
+      ],
+      "notes": "실패만 텔레그램으로",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -231,7 +239,9 @@
           "id": "mbJobApi0000001",
           "name": "MiniBatch job-api"
         }
-      }
+      },
+      "notes": "GET /series?status=PROPOSED",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -288,7 +298,9 @@
       "position": [
         1100,
         500
-      ]
+      ],
+      "notes": "계획 내용 + 보류/승인",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -402,7 +414,9 @@
           "id": "mbJobApi0000001",
           "name": "MiniBatch job-api"
         }
-      }
+      },
+      "notes": "POST /series/{id}/approve",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -449,6 +463,22 @@
       "position": [
         2200,
         520
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 3. 시리즈 계획\n**위 흐름 (매시 50분)**: 승인 대기 계획이 없고 진행 중 시리즈의 남은 화가 10편보다 적으면 job-api 에 '주제 묻기'를 요청 → job-api 가 하루 한 번 텔레그램으로 주제·화 수를 묻는다(D37)\n→ 답 `주제, 화수`, [자동으로 정하기], `/series 주제, 화수` 가 오면 job-api 가 계획을 만들고 [계획 승인] 메시지를 보낸다 → 승인하면 앞 시리즈가 끝난 뒤 1화부터 생산\n**아래 흐름 (폼)**: 텔레그램 대신 브라우저에서 승인 대기 계획을 보고 승인한다\n**지금 상태 보기**: 0번 현황 폼의 [다음 계획](승인 대기·텔레그램 보낸 시각)과 [주제 질문] 줄, 텔레그램 /status",
+        "width": 760,
+        "height": 168,
+        "color": 5
+      },
+      "id": "58699571-5201-5c52-b6a9-bea66d2da291",
+      "name": "전체 흐름",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -228
       ]
     }
   ],

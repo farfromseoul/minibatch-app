@@ -43,7 +43,9 @@
       "position": [
         220,
         100
-      ]
+      ],
+      "notes": "job-api 주소·chat id·카테고리. 여기 한 곳만 고친다",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -74,7 +76,9 @@
           "id": "mbJobApi0000001",
           "name": "MiniBatch job-api"
         }
-      }
+      },
+      "notes": "GET /pipeline: 단계 이름 순서",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -105,7 +109,9 @@
           "id": "mbJobApi0000001",
           "name": "MiniBatch job-api"
         }
-      }
+      },
+      "notes": "GET /jobs/next: 끝나지 않았고 기다릴 이유가 없는 작업 하나",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -120,7 +126,9 @@
       "position": [
         1100,
         100
-      ]
+      ],
+      "notes": "있으면 그 작업, 없으면 새 작업 만들기",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -154,7 +162,9 @@
           "id": "mbJobApi0000001",
           "name": "MiniBatch job-api"
         }
-      }
+      },
+      "notes": "POST /jobs: 진행 중 시리즈의 다음 화(없으면 단독 주제)",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -167,7 +177,9 @@
       "position": [
         1540,
         260
-      ]
+      ],
+      "notes": "201=새 작업. 409=하루 한도·검토 적체·앞 화 제작 중·후보 없음",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -182,7 +194,9 @@
       "position": [
         1760,
         260
-      ]
+      ],
+      "notes": "만들었으면 진행, 알릴 이유면 텔레그램, 아니면 끝",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -206,7 +220,9 @@
           "id": "mbTelegram00001",
           "name": "MiniBatch 텔레그램"
         }
-      }
+      },
+      "notes": "후보 없음·검토 적체만 알린다",
+      "notesInFlow": true
     },
     {
       "parameters": {},
@@ -230,7 +246,9 @@
       "position": [
         2200,
         100
-      ]
+      ],
+      "notes": "이번에 진행할 작업 ID",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -261,7 +279,9 @@
           "id": "mbJobApi0000001",
           "name": "MiniBatch job-api"
         }
-      }
+      },
+      "notes": "GET /jobs/{id}: 단계별 시도 기록",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -274,7 +294,9 @@
       "position": [
         2640,
         100
-      ]
+      ],
+      "notes": "다음에 실행할 단계·기다림·되돌리기·실패를 정한다 (decide.mjs)",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -289,7 +311,9 @@
       "position": [
         2860,
         100
-      ]
+      ],
+      "notes": "next=다음 작업, fail=실패 알림, stop=끝, 그 밖=기다렸다 요청",
+      "notesInFlow": true
     },
     {
       "parameters": {},
@@ -300,7 +324,9 @@
       "position": [
         3080,
         -160
-      ]
+      ],
+      "notes": "검토 대기가 됐거나 한도·앞 화를 기다리는 작업은 두고 다음 작업",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -324,7 +350,9 @@
           "id": "mbTelegram00001",
           "name": "MiniBatch 텔레그램"
         }
-      }
+      },
+      "notes": "단계가 실패하면 텔레그램으로 알린다",
+      "notesInFlow": true
     },
     {
       "parameters": {},
@@ -350,7 +378,9 @@
         3080,
         340
       ],
-      "webhookId": "9db3a1df-8189-5dc5-8331-2df71c4d300d"
+      "webhookId": "9db3a1df-8189-5dc5-8331-2df71c4d300d",
+      "notes": "단계가 끝나길 잠깐 기다린다",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -365,7 +395,9 @@
       "position": [
         3300,
         340
-      ]
+      ],
+      "notes": "run=단계 실행, reset=앞 단계부터 다시",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -399,7 +431,9 @@
           "id": "mbJobApi0000001",
           "name": "MiniBatch job-api"
         }
-      }
+      },
+      "notes": "POST /jobs/{id}/steps/{step}",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -430,7 +464,25 @@
           "id": "mbJobApi0000001",
           "name": "MiniBatch job-api"
         }
-      }
+      },
+      "notes": "POST /jobs/{id}/reset?from=: 품질 검사 실패 등",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "content": "## 1. 생산 (하루 10편)\n**언제**: 매일 06~23시 매시 정각 (수동 실행도 됨)\n**하는 일**: ① job-api 에 '이어 할 작업'을 묻고, 없으면 새 작업(진행 중 시리즈의 다음 화, 없으면 단독 주제)을 만든다 ② 그 작업을 주제→대본→대본 검토→장면→음성→타임라인→소재→렌더→품질 검사→업로드 순서로 한 단계씩 요청한다 ③ 업로드가 끝나면 job-api 가 텔레그램으로 [승인(공개)][반려] 를 보낸다(이 워크플로는 다음 작업으로)\n**막히면**: 업로드 한도·앞 화 업로드 대기는 그 작업을 두고 다음 작업으로 넘어간다. 실패는 텔레그램 '⚠️ MiniBatch 실패'\n**지금 상태 보기**: 0번 현황 폼, 텔레그램 /status (화별: 아직 안 만듦·만드는 중·한도 대기·검토 대기·공개)",
+        "width": 760,
+        "height": 168,
+        "color": 5
+      },
+      "id": "2a7c538a-ae98-5f3c-a3ba-38b4eb55b59a",
+      "name": "전체 흐름",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -388
+      ]
     }
   ],
   "connections": {

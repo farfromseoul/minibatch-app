@@ -72,7 +72,9 @@
           "id": "mbJobApi0000001",
           "name": "MiniBatch job-api"
         }
-      }
+      },
+      "notes": "GET /jobs?status=REVIEW",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -129,7 +131,9 @@
       "position": [
         1100,
         0
-      ]
+      ],
+      "notes": "영상 링크 + 승인/반려/보류 선택",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -194,7 +198,9 @@
       "position": [
         1760,
         -100
-      ]
+      ],
+      "notes": "고른 것을 화 순서대로",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -257,7 +263,9 @@
           "id": "mbJobApi0000001",
           "name": "MiniBatch job-api"
         }
-      }
+      },
+      "notes": "POST /jobs/{id}/approve 또는 reject",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -270,7 +278,9 @@
       "position": [
         2420,
         -320
-      ]
+      ],
+      "notes": "공개 결과를 한 줄씩",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -304,6 +314,22 @@
       "position": [
         2200,
         60
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 2. 영상 검토 폼 (예비)\n**언제**: 폼 주소를 열 때만 (평소에는 텔레그램 [승인(공개)][반려] 버튼을 쓴다)\n**하는 일**: 검토 대기(REVIEW) 영상을 시리즈·화 순서로 보여 주고 승인(바로 공개)·반려·보류를 받는다. 시리즈는 앞 화부터 승인해야 한다\n**지금 상태 보기**: 0번 현황 폼, 텔레그램 /status",
+        "width": 760,
+        "height": 146,
+        "color": 5
+      },
+      "id": "10eecf4a-f8ae-51e7-88fd-86e519e65544",
+      "name": "전체 흐름",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -526
       ]
     }
   ],

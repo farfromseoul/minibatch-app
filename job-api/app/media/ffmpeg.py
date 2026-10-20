@@ -70,6 +70,17 @@ def analyze(path: Path, silence_db: int = -50, silence_min_sec: float = 1.5, tim
     }
 
 
+def probe_video(path: Path, timeout: int = 60) -> dict[str, Any]:
+    """가져온 영상(ASMR, D38)의 길이·크기·소리 유무만 잰다. 음량 측정은 하지 않는다"""
+    probe = json.loads(subprocess.run(
+        ["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", str(path)],
+        check=True, capture_output=True, text=True, timeout=timeout).stdout)
+    video = next((s for s in probe["streams"] if s["codec_type"] == "video"), None)
+    return {"durationSec": float(probe["format"].get("duration") or 0),
+            "width": int(video["width"]) if video else 0, "height": int(video["height"]) if video else 0,
+            "audio": any(s["codec_type"] == "audio" for s in probe["streams"])}
+
+
 def parse_loudnorm(log: str) -> dict[str, str]:
     """loudnorm print_format=json 이 stderr 끝에 찍는 JSON"""
     m = _LOUDNORM_JSON.search(log)

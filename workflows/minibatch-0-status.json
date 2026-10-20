@@ -1,0 +1,218 @@
+{
+  "name": "MiniBatch 0 현황 보기",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "minibatch-status",
+        "formTitle": "MiniBatch 현황",
+        "formDescription": "시리즈 화별 상태, 다음 계획, 주제 질문, ASMR 을 한 번에 봅니다. 텔레그램 /status 와 같은 내용입니다.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "메모",
+              "placeholder": "비워도 됩니다",
+              "requiredField": false
+            }
+          ]
+        },
+        "options": {
+          "buttonLabel": "현황 보기",
+          "appendAttribution": false
+        }
+      },
+      "id": "fbed444d-8de9-5d5e-98d9-9e8521a453df",
+      "name": "현황 폼",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.3,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "06de24ea-83b5-5553-acca-7f781c38445c"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 설정: 여기 한 곳만 고친다. 텔레그램 chat id 는 비밀 값이 아니다 (봇 토큰은 자격 증명 'MiniBatch 텔레그램' 에)\nreturn [{ json: {\n  api: 'http://job-api:8080',                 // compose 안의 job-api 주소\n  chatId: 'CHAT_ID_를_여기에',                 // 25번 ③에서 확인한 내 chat id (숫자)\n  formBase: 'http://localhost:5678/form',     // 승인 폼 주소 (이 MacBook 브라우저에서 연다)\n  category: 'ai-it',\n} }];"
+      },
+      "id": "ef98b8ac-bfc2-51cb-aff8-f9003c8a9c6d",
+      "name": "설정",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('설정').first().json.api }}/overview",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "0cf33d70-58a4-5ef6-90cb-80cbb2776834",
+      "name": "현황 가져오기",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mbJobApi0000001",
+          "name": "MiniBatch job-api"
+        }
+      },
+      "notes": "GET /overview (읽기만 한다)",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// job-api 가 만든 요약(text)을 그대로 보여 준다\nconst esc = s => String(s ?? '').replace(/[<>&\"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '\"': '&quot;' }[c]));\nconst r = $input.first().json;\nconst html = r.text ? `<pre style=\"white-space:pre-wrap;font-size:14px;line-height:1.5\">${esc(r.text)}</pre>`\n                    : `<p>job-api 응답 없음: ${esc(JSON.stringify(r).slice(0, 300))}</p>`;\nreturn [{ json: { fields: [{ fieldType: 'html', fieldName: 'status', html }] } }];"
+      },
+      "id": "1469426c-3a14-5fc7-8bb3-1719e34eab8d",
+      "name": "현황 화면 만들기",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "notes": "요약 글을 그대로 보여 준다",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "operation": "page",
+        "defineForm": "json",
+        "jsonOutput": "={{ JSON.stringify($json.fields) }}",
+        "options": {
+          "formTitle": "MiniBatch 현황",
+          "formDescription": "다시 보려면 폼 주소를 새로 엽니다.",
+          "buttonLabel": "제출"
+        }
+      },
+      "id": "8f26959a-389e-53e8-9274-2968897e5a61",
+      "name": "현황 화면",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "text",
+        "completionTitle": "닫았습니다",
+        "completionMessage": "다시 보려면 폼 주소를 새로 엽니다.",
+        "options": {}
+      },
+      "id": "e1ba46dc-3054-54fa-9579-495b31feaebc",
+      "name": "끝",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 0. 현황 보기\n**언제**: 폼 주소를 열 때 (텔레그램에서는 /status)\n**보여 주는 것**: ① 진행 중 시리즈의 화별 상태: 아직 안 만듦 · 만드는 중(단계) · 한도 대기(다음 시도 시각) · 앞 화 기다림 · 검토 대기(비공개 업로드됨) · 공개 ② 다음 계획: 승인 대기 · 텔레그램 보낸 시각 ③ 주제 질문 상태 ④ 단독 영상 ⑤ ASMR 대기 수 ⑥ 오늘 업로드 수\n**자세히**: 작업 하나는 GET /jobs/{id} (단계별 시도·오류), n8n 실행 기록은 1번 워크플로 Executions",
+        "width": 760,
+        "height": 146,
+        "color": 5
+      },
+      "id": "6ffdd15f-a31a-5dc3-a21a-d3f5c438adfd",
+      "name": "전체 흐름",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -206
+      ]
+    }
+  ],
+  "connections": {
+    "현황 폼": {
+      "main": [
+        [
+          {
+            "node": "설정",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "설정": {
+      "main": [
+        [
+          {
+            "node": "현황 가져오기",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "현황 가져오기": {
+      "main": [
+        [
+          {
+            "node": "현황 화면 만들기",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "현황 화면 만들기": {
+      "main": [
+        [
+          {
+            "node": "현황 화면",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "현황 화면": {
+      "main": [
+        [
+          {
+            "node": "끝",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Seoul",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": [],
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

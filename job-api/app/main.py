@@ -12,12 +12,14 @@ from typing import Callable, Optional
 import httpx
 from fastapi import FastAPI
 
+from app.asmr.service import AsmrService
 from app.core import errors
 from app.core.auth import load_token
 from app.core.config import Settings
 from app.core.timeutil import utcnow
 from app.db.migrate import upgrade
 from app.db.session import make_engine, make_sessionmaker
+from app.media.ffmpeg import probe_video
 from app.pipeline.pipeline import PIPELINE
 from app.pipeline.runner import Runner
 from app.pipeline.steps import default_steps
@@ -43,7 +45,8 @@ def http_notify(url: str, payload: dict) -> None:
 def create_app(settings: Optional[Settings] = None, *, steps: Optional[dict] = None,
                pipeline: Optional[list[str]] = None, executor: Callable = thread_executor,
                notify: Callable = http_notify, clock: Callable = utcnow, providers=None,
-               youtube: Optional[Callable] = None, telegram: Optional[TelegramBot] = None) -> FastAPI:
+               youtube: Optional[Callable] = None, telegram: Optional[TelegramBot] = None,
+               asmr_youtube: Optional[Callable] = None, asmr_probe: Optional[Callable] = None) -> FastAPI:
     """테스트는 가짜 단계·즉시 실행기·가짜 시계·가짜 YouTube 를 넣는다. 실제 서버는 환경 변수로 정한다."""
 
     @asynccontextmanager
@@ -73,6 +76,12 @@ def create_app(settings: Optional[Settings] = None, *, steps: Optional[dict] = N
                                   on_review=app.state.telegram.notify_review if app.state.telegram else None)
         if app.state.telegram is not None:  # 텔레그램으로 받은 주제로 계획을 만들 때 쓴다 (D37)
             app.state.telegram.attach(app.state.runner, registry)
+        # ASMR 채널 (D38): MiniBatch 와 다른 인증 파일로 올린다. 인증 파일은 올릴 때 읽는다(없어도 서버는 뜬다)
+        app.state.asmr = AsmrService(
+            s, db=app.state.db, clock=clock, probe=asmr_probe or probe_video, bot=bot,
+            youtube_factory=asmr_youtube or (lambda st: YouTube.from_files(st.asmr_youtube_client_file, st.asmr_youtube_token_file)))
+        if app.state.telegram is not None:
+            app.state.telegram.asmr = app.state.asmr
         recovered = app.state.runner.recover()  # 규칙 8
         if recovered:
             log.warning("재시작 복구: 실행 중으로 남은 시도 %d건을 일시적 실패로 기록", recovered)

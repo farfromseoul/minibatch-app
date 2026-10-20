@@ -72,7 +72,9 @@
           "id": "mbJobApi0000001",
           "name": "MiniBatch job-api"
         }
-      }
+      },
+      "notes": "GET /jobs",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -103,7 +105,9 @@
           "id": "mbJobApi0000001",
           "name": "MiniBatch job-api"
         }
-      }
+      },
+      "notes": "GET /series",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -116,7 +120,9 @@
       "position": [
         880,
         0
-      ]
+      ],
+      "notes": "취소할 수 있는 것만 유지/취소로",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -181,7 +187,9 @@
       "position": [
         1540,
         -100
-      ]
+      ],
+      "notes": "시리즈 먼저, 그다음 작업",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -291,6 +299,22 @@
       "position": [
         1980,
         60
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 5. 취소 폼\n**언제**: 폼 주소를 열 때만\n**하는 일**: 공개 전 작업과 끝나지 않은 시리즈(승인 대기 계획 포함)를 취소한다. 이미 올린 비공개 영상은 YouTube 에 그대로 남는다\n**지금 상태 보기**: 0번 현황 폼, 텔레그램 /status",
+        "width": 760,
+        "height": 146,
+        "color": 5
+      },
+      "id": "e1bcece6-5dbc-59f1-9c42-1fb11fe12d9e",
+      "name": "전체 흐름",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -526
       ]
     }
   ],

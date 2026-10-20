@@ -1,0 +1,207 @@
+{
+  "name": "MiniBatch 6 ASMR 확인",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "7dffae41-f7ae-5c9d-9217-e31fee8febdf",
+      "name": "매시 정각",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "8fff2ff3-81b6-5d53-8057-f5d4c557c96b",
+      "name": "수동 실행",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 설정: 여기 한 곳만 고친다. 텔레그램 chat id 는 비밀 값이 아니다 (봇 토큰은 자격 증명 'MiniBatch 텔레그램' 에)\nreturn [{ json: {\n  api: 'http://job-api:8080',                 // compose 안의 job-api 주소\n  chatId: 'CHAT_ID_를_여기에',                 // 25번 ③에서 확인한 내 chat id (숫자)\n  formBase: 'http://localhost:5678/form',     // 승인 폼 주소 (이 MacBook 브라우저에서 연다)\n  category: 'ai-it',\n} }];"
+      },
+      "id": "74ec573b-275a-5a0f-aa46-182e0a46cc55",
+      "name": "설정",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('설정').first().json.api }}/asmr/scan",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 900000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "fcb145f6-04a0-5048-9c64-91dccd9efb68",
+      "name": "inbox 확인",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        100
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mbJobApi0000001",
+          "name": "MiniBatch job-api"
+        }
+      },
+      "notes": "POST /asmr/scan: 새 영상 승인 요청 + 승인된 영상 올리기",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 승인 요청·업로드 결과는 job-api 가 텔레그램으로 보낸다 (D38). 여기서는 확인 실패만 알린다\nconst r = $input.first().json;\nif (r.statusCode === 200) return [];\nreturn [{ json: { text: `⚠️ MiniBatch ASMR inbox 확인 실패 (${r.statusCode}): ${r.body?.error?.message || ''}` } }];"
+      },
+      "id": "f2117630-12a8-591f-8efd-53b7e05c86c8",
+      "name": "알림 문장",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        100
+      ],
+      "notes": "실패만 텔레그램으로",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('설정').first().json.chatId }}",
+        "text": "={{ String($json.text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "21ab9692-e75b-5ffb-81a1-6150c56bb8b6",
+      "name": "알림: ASMR",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        100
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "mbTelegram00001",
+          "name": "MiniBatch 텔레그램"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## 6. ASMR 확인 (D38)\n**언제**: 매시 정각 (수동 실행도 됨)\n**하는 일**: job-api 에 inbox 확인을 요청한다. 새 영상은 job-api 가 텔레그램으로 미리보기 + [업로드 승인][버리기] 를 보내고, 승인되면 비공개 업로드 → [공개 승인] → 공개. 하루 3편, 넘으면 다음 날\n**파일 위치**: 맥미니 ~/minibatch-data/asmr/ inbox → uploaded → published (버린 것 rejected)\n**지금 상태 보기**: 0번 현황 폼 [ASMR] 줄, 텔레그램 /status, GET /asmr/videos",
+        "width": 760,
+        "height": 168,
+        "color": 5
+      },
+      "id": "8b7c71fa-7670-53a0-bbb3-b6f7fea1bc84",
+      "name": "전체 흐름",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -228
+      ]
+    }
+  ],
+  "connections": {
+    "매시 정각": {
+      "main": [
+        [
+          {
+            "node": "설정",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "수동 실행": {
+      "main": [
+        [
+          {
+            "node": "설정",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "설정": {
+      "main": [
+        [
+          {
+            "node": "inbox 확인",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "inbox 확인": {
+      "main": [
+        [
+          {
+            "node": "알림 문장",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "알림 문장": {
+      "main": [
+        [
+          {
+            "node": "알림: ASMR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Seoul",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": [],
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

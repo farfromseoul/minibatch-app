@@ -56,7 +56,9 @@
         440,
         0
       ],
-      "onError": "continueRegularOutput"
+      "onError": "continueRegularOutput",
+      "notes": "GET /healthz: 서비스·토큰·디스크 점검",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -69,7 +71,9 @@
       "position": [
         660,
         0
-      ]
+      ],
+      "notes": "지난번과 다를 때만 알린다",
+      "notesInFlow": true
     },
     {
       "parameters": {
@@ -94,6 +98,22 @@
           "name": "MiniBatch 텔레그램"
         }
       }
+    },
+    {
+      "parameters": {
+        "content": "## 4. 상태 감시\n**언제**: 5분마다\n**하는 일**: job-api /healthz 를 보고 새 경고(디스크, YouTube 토큰 만료 임박, 작업자 응답 없음 등)만 텔레그램으로 보낸다. 같은 경고는 한 번, 사라지면 '회복'\n**영상·시리즈 진행 상태는 여기 없다**: 0번 현황 폼, 텔레그램 /status",
+        "width": 760,
+        "height": 146,
+        "color": 5
+      },
+      "id": "698e0967-7eff-5d38-8c6a-b1dc7ee26933",
+      "name": "전체 흐름",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -206
+      ]
     }
   ],
   "connections": {

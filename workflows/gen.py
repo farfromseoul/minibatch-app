@@ -41,7 +41,19 @@ class WF:
             outs.append([])
         outs[out].append({"node": b, "type": "main", "index": inp})
 
-    def save(self, fname, active=False):
+    def save(self, fname, active=False, about=None, notes=None):
+        """about: 워크플로 왼쪽 위에 붙이는 '전체 흐름' 메모. notes: 노드 이름 → 역할 (노드 아래에 보인다, 2026-10-20 사용자)"""
+        for n in self.nodes:
+            if notes and n["name"] in notes:
+                n["notes"], n["notesInFlow"] = notes[n["name"]], True
+        assert not notes or set(notes) <= {n["name"] for n in self.nodes}, set(notes) - {n["name"] for n in self.nodes}
+        if about:
+            xs = [n["position"][0] for n in self.nodes]
+            ys = [n["position"][1] for n in self.nodes]
+            height = 80 + 22 * about.count("\n")
+            self.add("전체 흐름", "n8n-nodes-base.stickyNote", 1,
+                     {"content": about, "width": 760, "height": height, "color": 5},
+                     [min(xs), min(ys) - height - 60])
         data = {"name": self.name, "nodes": self.nodes, "connections": self.conn, "settings": SETTINGS,
                 "active": active, "pinData": {}, "tags": [], "meta": {"templateCredsSetupCompleted": False}}
         (OUT / fname).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -105,6 +117,91 @@ def form_done(wf, name, title, message, pos):
                    "completionMessage": message, "options": {}}, pos)
 
 
+
+# ---------------------------------------------------------------- 설명 (2026-10-20 사용자: 워크플로마다 용도와 노드 역할이 보이게)
+ABOUT1 = "## 1. 생산 (하루 10편)\n**언제**: 매일 06~23시 매시 정각 (수동 실행도 됨)\n**하는 일**: ① job-api 에 '이어 할 작업'을 묻고, 없으면 새 작업(진행 중 시리즈의 다음 화, 없으면 단독 주제)을 만든다 ② 그 작업을 주제→대본→대본 검토→장면→음성→타임라인→소재→렌더→품질 검사→업로드 순서로 한 단계씩 요청한다 ③ 업로드가 끝나면 job-api 가 텔레그램으로 [승인(공개)][반려] 를 보낸다(이 워크플로는 다음 작업으로)\n**막히면**: 업로드 한도·앞 화 업로드 대기는 그 작업을 두고 다음 작업으로 넘어간다. 실패는 텔레그램 '⚠️ MiniBatch 실패'\n**지금 상태 보기**: 0번 현황 폼, 텔레그램 /status (화별: 아직 안 만듦·만드는 중·한도 대기·검토 대기·공개)"
+NOTES1 = {
+    '설정': 'job-api 주소·chat id·카테고리. 여기 한 곳만 고친다',
+    '단계 순서': 'GET /pipeline: 단계 이름 순서',
+    '이어 할 작업': 'GET /jobs/next: 끝나지 않았고 기다릴 이유가 없는 작업 하나',
+    '이어 할 작업 있나': '있으면 그 작업, 없으면 새 작업 만들기',
+    '새 작업 만들기': 'POST /jobs: 진행 중 시리즈의 다음 화(없으면 단독 주제)',
+    '새 작업 결과': '201=새 작업. 409=하루 한도·검토 적체·앞 화 제작 중·후보 없음',
+    '만들었나': '만들었으면 진행, 알릴 이유면 텔레그램, 아니면 끝',
+    '알림: 만들지 않음': '후보 없음·검토 적체만 알린다',
+    '작업 정함': '이번에 진행할 작업 ID',
+    '작업 상태': 'GET /jobs/{id}: 단계별 시도 기록',
+    '다음 행동': '다음에 실행할 단계·기다림·되돌리기·실패를 정한다 (decide.mjs)',
+    '행동': 'next=다음 작업, fail=실패 알림, stop=끝, 그 밖=기다렸다 요청',
+    '다음 작업으로': '검토 대기가 됐거나 한도·앞 화를 기다리는 작업은 두고 다음 작업',
+    '알림: 실패': '단계가 실패하면 텔레그램으로 알린다',
+    '기다리기': '단계가 끝나길 잠깐 기다린다',
+    '요청 종류': 'run=단계 실행, reset=앞 단계부터 다시',
+    '단계 요청': 'POST /jobs/{id}/steps/{step}',
+    '되돌리기': 'POST /jobs/{id}/reset?from=: 품질 검사 실패 등',
+}
+ABOUT2 = '## 2. 영상 검토 폼 (예비)\n**언제**: 폼 주소를 열 때만 (평소에는 텔레그램 [승인(공개)][반려] 버튼을 쓴다)\n**하는 일**: 검토 대기(REVIEW) 영상을 시리즈·화 순서로 보여 주고 승인(바로 공개)·반려·보류를 받는다. 시리즈는 앞 화부터 승인해야 한다\n**지금 상태 보기**: 0번 현황 폼, 텔레그램 /status'
+NOTES2 = {
+    '검토 대기 목록': 'GET /jobs?status=REVIEW',
+    '폼 만들기': '영상 링크 + 승인/반려/보류 선택',
+    '처리 목록': '고른 것을 화 순서대로',
+    '승인·반려 요청': 'POST /jobs/{id}/approve 또는 reject',
+    '결과 정리': '공개 결과를 한 줄씩',
+}
+ABOUT3 = "## 3. 시리즈 계획\n**위 흐름 (매시 50분)**: 승인 대기 계획이 없고 진행 중 시리즈의 남은 화가 10편보다 적으면 job-api 에 '주제 묻기'를 요청 → job-api 가 하루 한 번 텔레그램으로 주제·화 수를 묻는다(D37)\n→ 답 `주제, 화수`, [자동으로 정하기], `/series 주제, 화수` 가 오면 job-api 가 계획을 만들고 [계획 승인] 메시지를 보낸다 → 승인하면 앞 시리즈가 끝난 뒤 1화부터 생산\n**아래 흐름 (폼)**: 텔레그램 대신 브라우저에서 승인 대기 계획을 보고 승인한다\n**지금 상태 보기**: 0번 현황 폼의 [다음 계획](승인 대기·텔레그램 보낸 시각)과 [주제 질문] 줄, 텔레그램 /status"
+NOTES3 = {
+    '시리즈 목록': 'GET /series: 시리즈별 남은 화 수',
+    '계획이 필요한가': '승인 대기 계획이 있으면 멈춤. 남은 화 10 미만이면 진행',
+    '주제 묻기 (텔레그램)': 'POST /series/request: 오늘 안 물었으면 텔레그램으로 묻는다(하루 한 번)',
+    '알림 문장': '실패만 텔레그램으로',
+    '승인 대기 계획': 'GET /series?status=PROPOSED',
+    '계획 폼 만들기': '계획 내용 + 보류/승인',
+    '계획 승인 요청': 'POST /series/{id}/approve',
+}
+ABOUT4 = "## 4. 상태 감시\n**언제**: 5분마다\n**하는 일**: job-api /healthz 를 보고 새 경고(디스크, YouTube 토큰 만료 임박, 작업자 응답 없음 등)만 텔레그램으로 보낸다. 같은 경고는 한 번, 사라지면 '회복'\n**영상·시리즈 진행 상태는 여기 없다**: 0번 현황 폼, 텔레그램 /status"
+NOTES4 = {
+    'healthz': 'GET /healthz: 서비스·토큰·디스크 점검',
+    '새 경고인가': '지난번과 다를 때만 알린다',
+}
+ABOUT5 = '## 5. 취소 폼\n**언제**: 폼 주소를 열 때만\n**하는 일**: 공개 전 작업과 끝나지 않은 시리즈(승인 대기 계획 포함)를 취소한다. 이미 올린 비공개 영상은 YouTube 에 그대로 남는다\n**지금 상태 보기**: 0번 현황 폼, 텔레그램 /status'
+NOTES5 = {
+    '작업 목록': 'GET /jobs',
+    '시리즈 목록': 'GET /series',
+    '폼 만들기': '취소할 수 있는 것만 유지/취소로',
+    '취소 목록': '시리즈 먼저, 그다음 작업',
+}
+ABOUT6 = '## 6. ASMR 확인 (D38)\n**언제**: 매시 정각 (수동 실행도 됨)\n**하는 일**: job-api 에 inbox 확인을 요청한다. 새 영상은 job-api 가 텔레그램으로 미리보기 + [업로드 승인][버리기] 를 보내고, 승인되면 비공개 업로드 → [공개 승인] → 공개. 하루 3편, 넘으면 다음 날\n**파일 위치**: 맥미니 ~/minibatch-data/asmr/ inbox → uploaded → published (버린 것 rejected)\n**지금 상태 보기**: 0번 현황 폼 [ASMR] 줄, 텔레그램 /status, GET /asmr/videos'
+NOTES6 = {
+    'inbox 확인': 'POST /asmr/scan: 새 영상 승인 요청 + 승인된 영상 올리기',
+    '알림 문장': '실패만 텔레그램으로',
+}
+
+# ---------------------------------------------------------------- 0. 현황 보기 (2026-10-20)
+w = WF("MiniBatch 0 현황 보기")
+ft = w.add("현황 폼", "n8n-nodes-base.formTrigger", 2.3,
+           {"path": "minibatch-status", "formTitle": "MiniBatch 현황",
+            "formDescription": "시리즈 화별 상태, 다음 계획, 주제 질문, ASMR 을 한 번에 봅니다. 텔레그램 /status 와 같은 내용입니다.",
+            "formFields": {"values": [{"fieldLabel": "메모", "placeholder": "비워도 됩니다", "requiredField": False}]},
+            "options": {"buttonLabel": "현황 보기", "appendAttribution": False}},
+           [0, 0], webhookId=str(uuid.uuid5(uuid.NAMESPACE_URL, "minibatch/minibatch-status")))
+cfg = code(w, "설정", CONFIG_JS, [220, 0])
+ov = http(w, "현황 가져오기", "GET", "={{ $('설정').first().json.api }}/overview", [440, 0])
+mk = code(w, "현황 화면 만들기", """// job-api 가 만든 요약(text)을 그대로 보여 준다
+const esc = s => String(s ?? '').replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+const r = $input.first().json;
+const html = r.text ? `<pre style="white-space:pre-wrap;font-size:14px;line-height:1.5">${esc(r.text)}</pre>`
+                    : `<p>job-api 응답 없음: ${esc(JSON.stringify(r).slice(0, 300))}</p>`;
+return [{ json: { fields: [{ fieldType: 'html', fieldName: 'status', html }] } }];""", [660, 0])
+pg = form_page(w, "현황 화면", "MiniBatch 현황", "다시 보려면 폼 주소를 새로 엽니다.", [880, 0])
+done = form_done(w, "끝", "닫았습니다", "다시 보려면 폼 주소를 새로 엽니다.", [1100, 0])
+for a, b in [(ft, cfg), (cfg, ov), (ov, mk), (mk, pg), (pg, done)]:
+    w.link(a, b)
+w.save("minibatch-0-status.json", about="""## 0. 현황 보기
+**언제**: 폼 주소를 열 때 (텔레그램에서는 /status)
+**보여 주는 것**: ① 진행 중 시리즈의 화별 상태: 아직 안 만듦 · 만드는 중(단계) · 한도 대기(다음 시도 시각) · 앞 화 기다림 · 검토 대기(비공개 업로드됨) · 공개 ② 다음 계획: 승인 대기 · 텔레그램 보낸 시각 ③ 주제 질문 상태 ④ 단독 영상 ⑤ ASMR 대기 수 ⑥ 오늘 업로드 수
+**자세히**: 작업 하나는 GET /jobs/{id} (단계별 시도·오류), n8n 실행 기록은 1번 워크플로 Executions""",
+       notes={"현황 가져오기": "GET /overview (읽기만 한다)", "현황 화면 만들기": "요약 글을 그대로 보여 준다"})
+
 # ---------------------------------------------------------------- 1. 생산
 w = WF("MiniBatch 1 생산 (하루 10편)")
 t1 = cron(w, "매일 06시 몰아서, 07~23시 매시 이어서", ["0 0 6-23 * * *"], [0, 0])
@@ -152,7 +249,7 @@ w.link(sw0, fix, 0); w.link(sw0, new, 1)
 w.link(sw1, fix, 0); w.link(sw1, tgn, 1); w.link(sw1, end0, 2)
 w.link(sw2, nxt, 0); w.link(sw2, tgf, 1); w.link(sw2, end1, 2); w.link(sw2, wt, 3)
 w.link(sw3, req, 0); w.link(sw3, rst, 1); w.link(sw3, st, 2)
-w.save("minibatch-1-produce.json")
+w.save("minibatch-1-produce.json", about=ABOUT1, notes=NOTES1)
 
 # ---------------------------------------------------------------- 2. 영상 검토 폼
 w = WF("MiniBatch 2 영상 검토 폼")
@@ -216,7 +313,7 @@ for a, b in [(ft, cfg), (cfg, lst), (lst, spl), (spl, det), (det, mk), (mk, sw),
 w.link(sw, pg, 0); w.link(sw, none, 1)
 w.link(sw2, loop, 0); w.link(sw2, nothing, 1)
 w.link(loop, res, 0); w.link(loop, do, 1)
-w.save("minibatch-2-review-form.json")
+w.save("minibatch-2-review-form.json", about=ABOUT2, notes=NOTES2)
 
 # ---------------------------------------------------------------- 3. 시리즈 계획 (만들기 + 승인 폼)
 w = WF("MiniBatch 3 시리즈 계획")
@@ -278,7 +375,7 @@ for a, b in [(ft, cfg2), (cfg2, pl), (pl, sp), (sp, sd), (sd, mk), (mk, sw), (pg
     w.link(a, b)
 w.link(sw, pg, 0); w.link(sw, none, 1)
 w.link(sw2, ap, 0); w.link(sw2, nothing, 1)
-w.save("minibatch-3-series-plan.json")
+w.save("minibatch-3-series-plan.json", about=ABOUT3, notes=NOTES3)
 
 # ---------------------------------------------------------------- 4. 상태 감시
 w = WF("MiniBatch 4 상태 감시")
@@ -303,7 +400,7 @@ return [{ json: { text: key ? `⚠️ MiniBatch 상태 경고\\n- ${problems.joi
 tg = telegram(w, "알림: 상태", "={{ $json.text }}", [880, 0])
 for a, b in [(t1, cfg), (cfg, hz), (hz, judge), (judge, tg)]:
     w.link(a, b)
-w.save("minibatch-4-health.json")
+w.save("minibatch-4-health.json", about=ABOUT4, notes=NOTES4)
 
 
 # ---------------------------------------------------------------- 5. 취소 폼 (D29, 2026-10-17)
@@ -369,7 +466,22 @@ for a, b in [(ft, cfg), (cfg, jl), (jl, sl), (sl, mk), (mk, sw), (pg, plan), (pl
 w.link(sw, pg, 0); w.link(sw, none, 1)
 w.link(sw2, loop, 0); w.link(sw2, nothing, 1)
 w.link(loop, res, 0); w.link(loop, do, 1)
-w.save("minibatch-5-cancel-form.json")
+w.save("minibatch-5-cancel-form.json", about=ABOUT5, notes=NOTES5)
+
+# ---------------------------------------------------------------- 6. ASMR 채널 확인 (D38, 2026-10-20)
+w = WF("MiniBatch 6 ASMR 확인")
+t1 = cron(w, "매시 정각", ["0 0 * * * *"], [0, 0])
+t2 = manual(w, [0, 200])
+cfg = code(w, "설정", CONFIG_JS, [220, 100])
+scan = http(w, "inbox 확인", "POST", "={{ $('설정').first().json.api }}/asmr/scan", [440, 100], full=True, timeout=900000)
+msg = code(w, "알림 문장", """// 승인 요청·업로드 결과는 job-api 가 텔레그램으로 보낸다 (D38). 여기서는 확인 실패만 알린다
+const r = $input.first().json;
+if (r.statusCode === 200) return [];
+return [{ json: { text: `⚠️ MiniBatch ASMR inbox 확인 실패 (${r.statusCode}): ${r.body?.error?.message || ''}` } }];""", [660, 100])
+tg = telegram(w, "알림: ASMR", "={{ $json.text }}", [880, 100])
+for a, b in [(t1, cfg), (t2, cfg), (cfg, scan), (scan, msg), (msg, tg)]:
+    w.link(a, b)
+w.save("minibatch-6-asmr.json", about=ABOUT6, notes=NOTES6)
 
 # 노드 이름이 연결과 맞는지 확인
 for f in sorted(OUT.glob("*.json")):

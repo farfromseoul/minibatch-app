@@ -25,7 +25,9 @@ class FakeTelegram:
 
     def __call__(self, request):
         method = request.url.path.rsplit("/", 1)[-1]
-        body = json.loads(request.content or b"{}")
+        raw = request.read()
+        # sendVideo 는 multipart 라 원문 그대로 둔다
+        body = {"_raw": raw} if "multipart" in request.headers.get("content-type", "") else json.loads(raw or b"{}")
         self.requests.append((method, body))
         if method == "sendMessage" and self.fail_send:
             return httpx.Response(500, json={"ok": False})

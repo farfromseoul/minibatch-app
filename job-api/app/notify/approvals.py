@@ -23,7 +23,7 @@ from sqlalchemy import select
 from app.core.errors import ApiError
 from app.core.timeutil import kst_date
 from app.db.models import Episode, Job, Publication, Series
-from app.domain import generation, review, series_order
+from app.domain import generation, overview, review, series_order
 from app.publish.approve import approve_and_publish
 
 from .telegram import TelegramBot, TelegramError
@@ -62,6 +62,7 @@ class TelegramApprovals:
         self._reminded: dict[str, Any] = {}  # 작업 → 마지막으로 다시 알린 시각 (재시작하면 비어 6시간 뒤부터 다시 센다)
         self._state_lock = threading.Lock()  # API(묻기)와 받기 루프(답)가 같은 상태 파일을 고친다
         self.runner = self.providers = None  # 계획 생성에 쓴다. 서버가 만든 뒤 attach 로 넣는다
+        self.asmr = None  # ASMR 채널 버튼(ua·up·ux, D38). 서버가 만든 뒤 넣는다
 
     def attach(self, runner, providers) -> None:
         self.runner, self.providers = runner, providers
@@ -101,7 +102,13 @@ class TelegramApprovals:
             after = [f"앞 시리즈: {series_order.label(s, prev)}"] if prev is not None else []
             text = "\n".join([head, *after, str((series.bible or {}).get("premise", ""))]
                              + [f"{e.number}. {e.title}" for e in eps])
-        self._safe_send(text, [("계획 승인", f"p:{series_id}")])
+        try:
+            self.bot.send(text, [("계획 승인", f"p:{series_id}")])
+        except TelegramError as e:
+            log.warning("텔레그램 보내기 실패: %s", e)
+            return
+        sent = self.clock().isoformat()  # 현황(/overview)에 "보냈는지"를 보여 주려고 남긴다
+        self._edit_state(lambda st: st.setdefault("planSent", {}).__setitem__(series_id, sent))
 
     # ---------- 버튼 응답
 
@@ -114,6 +121,8 @@ class TelegramApprovals:
             elif u.get("message"):
                 self._handle_message(u["message"])
         self.make_wanted_plan()
+        if self.asmr is not None:  # [업로드 승인]을 누른 영상은 바로 올린다
+            self.asmr.process_queue()
 
     def _handle(self, cq: dict[str, Any]) -> None:
         msg = cq.get("message") or {}
@@ -137,6 +146,11 @@ class TelegramApprovals:
     def _apply(self, kind: str, target: str) -> str:
         if kind == "q":
             return self._question_button(target)
+        if kind in ("ua", "up", "ux"):  # ASMR 채널 (D38): 업로드 승인, 공개 승인, 버리기
+            if self.asmr is None:
+                return "ASMR 기능이 꺼져 있습니다"
+            act = {"ua": self.asmr.approve_upload, "up": self.asmr.publish, "ux": self.asmr.reject}[kind]
+            return act(target, WHO)
         now = self.clock()
         with self.db() as s:
             if kind in ("a", "r"):
@@ -211,6 +225,9 @@ class TelegramApprovals:
         if chat != self.bot.chat_id or str((msg.get("from") or {}).get("id", "")) != self.bot.chat_id:
             return  # 다른 대화에는 답하지 않는다
         text = str(msg.get("text") or "").strip()
+        if text.split(" ", 1)[0].split("@", 1)[0] == "/status":  # 현황 (n8n 0번 현황 폼과 같은 내용)
+            self._safe_send(self.status_text(), None)
+            return
         with self._state_lock:
             st = self._load()
             if text.split(" ", 1)[0].split("@", 1)[0] == "/series":
@@ -248,6 +265,30 @@ class TelegramApprovals:
                 self._want(st, None, int(st.get("count") or DEFAULT_COUNT))
                 return "🤖 주제를 자동으로 정합니다. 계획이 나오면 [계획 승인] 메시지를 보냅니다."
         return f"모르는 버튼: q:{target}"
+
+    def plan_sent(self) -> dict[str, str]:
+        return dict(self._load().get("planSent") or {})
+
+    def question_state(self) -> dict[str, Any]:
+        """다음 시리즈 주제 질문이 지금 어떤 상태인가 (현황용)"""
+        st = self._load()
+        want, today = st.get("want"), kst_date(self.clock())
+        if want:
+            label = f"계획 만드는 중: {want.get('theme') or '자동 주제'}, {want.get('count')}화"
+            if want.get("toldBusy"):
+                label += " (다른 작업이 끝나면 만듦)"
+        elif st.get("waiting"):
+            label = f"답을 기다리는 중 ({st.get('askedDate')} 물음). 텔레그램에 '주제, 화수'로 답하거나 버튼을 누르세요"
+        elif self._plan_waiting():
+            label = "승인 대기 계획이 있어 묻지 않음"
+        elif st.get("askedDate") == today:
+            label = "오늘은 물었음(건너뜀). 내일 다시 묻습니다"
+        else:
+            label = "남은 화가 10편보다 적어지면 n8n 3번이 묻습니다 (언제든 /series 주제, 화수)"
+        return {"label": label, "askedDate": st.get("askedDate"), "waiting": bool(st.get("waiting")), "want": want}
+
+    def status_text(self) -> str:
+        return overview.collect(self.db, self.clock, telegram=self, asmr=self.asmr)["text"]
 
     def _want(self, st: dict[str, Any], theme: Optional[str], count: int) -> None:
         """만들 계획을 상태 파일에 적는다. 실제 생성은 make_wanted_plan (제작 중이면 끝난 뒤)"""
@@ -313,6 +354,8 @@ class TelegramApprovals:
         for job_id in due[:MAX_REMIND]:
             self.notify_review(job_id, reminder=True)
             self._reminded[job_id] = now
+        if self.asmr is not None:
+            self.asmr.remind_due()
 
     @staticmethod
     def _approvable(s, job: Job) -> bool:

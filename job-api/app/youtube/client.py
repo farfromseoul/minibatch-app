@@ -132,8 +132,15 @@ class YouTube:
 
     # ---------- 영상
 
+    def my_channel_id(self) -> str:
+        """이 토큰이 올리는 채널. 다른 채널 토큰으로 올리는 사고를 막는 데 쓴다 (ASMR 채널, D38)"""
+        items = self._send("GET", f"{API}/channels", "채널 조회", params={"part": "id", "mine": "true"}).json().get("items") or []
+        if not items:
+            raise YouTubeError("deterministic", "토큰에 연결된 채널이 없다")
+        return str(items[0]["id"])
+
     def upload_video(self, path: Path, *, title: str, description: str, disclosure: str, category_id: str,
-                     tags: list[str], synthetic: bool) -> dict[str, Any]:
+                     tags: list[str], synthetic: bool, content_type: str = "video/mp4") -> dict[str, Any]:
         """비공개로 올린다. 고지 문구는 여기서 붙여 호출하는 쪽이 빠뜨릴 수 없게 한다 (앱 설계 2026-10-16 결정)"""
         if not disclosure or not disclosure.strip():
             raise ValueError("고지 문구가 비어 있다 (카테고리 youtube.disclosure)")
@@ -145,13 +152,13 @@ class YouTube:
         init = self._send("POST", UPLOAD, "업로드 세션", params={"uploadType": "resumable", "part": "snippet,status"},
                           headers={"Content-Type": "application/json; charset=UTF-8",
                                    "X-Upload-Content-Length": str(path.stat().st_size),
-                                   "X-Upload-Content-Type": "video/mp4"},
+                                   "X-Upload-Content-Type": content_type},
                           content=json.dumps(meta, ensure_ascii=False).encode("utf-8"))
         session = init.headers.get("Location")
         if not session:
             raise YouTubeError("transient", "업로드 세션 주소(Location)가 없다")
         with path.open("rb") as fh:
-            res = self._send("PUT", session, "영상 업로드", headers={"Content-Type": "video/mp4"}, content=fh.read())
+            res = self._send("PUT", session, "영상 업로드", headers={"Content-Type": content_type}, content=fh.read())
         return res.json()
 
     def set_privacy(self, video_id: str, privacy: str, publish_at: Optional[datetime] = None) -> dict[str, Any]:

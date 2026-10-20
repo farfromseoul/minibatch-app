@@ -15,7 +15,7 @@ from sqlalchemy import select, text
 from app.core.auth import require_token
 from app.core.errors import ApiError
 from app.db.models import Job, Series, Topic
-from app.domain import cancel as cancel_domain, generation, review, series as series_domain, topics as topic_domain
+from app.domain import cancel as cancel_domain, generation, overview, review, series as series_domain, topics as topic_domain
 from app.domain.jobs import create_job
 from app.domain.upload_order import next_job
 from app.publish import approve as publishing
@@ -352,6 +352,52 @@ def request_series(body: SeriesRequestBody, request: Request) -> dict[str, Any]:
     if st.telegram is None:
         raise ApiError(503, "telegram_off", "텔레그램이 꺼져 있어 주제를 물을 수 없다. POST /series 로 직접 만든다")
     return st.telegram.ask_series(body.category, body.episodeCount)
+
+
+# ---------- 현황 (2026-10-20)
+
+
+@api.get("/overview")
+def get_overview(request: Request) -> dict[str, Any]:
+    """시리즈 화별 상태(만듦·업로드 대기·검토·공개), 다음 계획(보냄·승인), 주제 질문, ASMR 을 한 번에. text 는 사람이 읽는 요약"""
+    st = _st(request)
+    return overview.collect(st.db, st.clock, telegram=st.telegram, asmr=st.asmr)
+
+
+# ---------- ASMR 채널 (D38)
+
+
+class AsmrActionBody(BaseModel):
+    by: str = Field(default="운영자", min_length=1, max_length=100)
+
+
+@api.post("/asmr/scan")
+def asmr_scan(request: Request) -> dict[str, Any]:
+    """n8n 이 1시간마다 부른다: inbox 의 새 영상에 업로드 승인을 묻고, 승인된 영상을 올린다"""
+    return _st(request).asmr.scan()
+
+
+@api.get("/asmr/videos")
+def asmr_list(request: Request, status: Optional[str] = Query(default=None)) -> dict[str, Any]:
+    return {"items": _st(request).asmr.list(status)}
+
+
+@api.get("/asmr/videos/{vid}")
+def asmr_get(vid: str, request: Request) -> dict[str, Any]:
+    return _st(request).asmr.get(vid)
+
+
+@api.post("/asmr/videos/{vid}/{action}")
+def asmr_action(vid: str, action: str, body: AsmrActionBody, request: Request) -> dict[str, Any]:
+    """텔레그램 버튼과 같은 일: approve-upload, publish, reject"""
+    asmr = _st(request).asmr
+    acts = {"approve-upload": asmr.approve_upload, "publish": asmr.publish, "reject": asmr.reject}
+    if action not in acts:
+        raise ApiError(404, "unknown_action", f"없는 동작: {action}")
+    message = acts[action](vid, body.by)
+    if action == "approve-upload":
+        asmr.process_queue()
+    return {"message": message, **asmr.get(vid)}
 
 
 def _get_series(s, series_id: str) -> Series:
