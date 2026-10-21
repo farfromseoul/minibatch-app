@@ -67,6 +67,40 @@ class AskTest(StuckCase):
         self.assertEqual(self.questions(), [])
 
 
+class MixedFailuresTest(StuckCase):
+    def test_critical_and_low_score_failures_count_together(self):
+        """2026-10-21 실제: 개요를 고친 6화가 점수 미달 2번 + 치명 오류 1번으로 떨어졌는데, 점수 미달만 세서
+        질문을 보내지 않았다(생산 워크플로는 세 번으로 보고 멈춤) → 아무 알림 없이 멈춤"""
+        self.post("/series", SERIES)
+        job_id = self.post("/jobs", {"seriesId": "ai-office"}).json()["id"]
+        review = self.steps["review"]
+        self.run_until(job_id, "review")  # 점수 미달
+        review.fail = StepFailure("deterministic", "검토에서 치명 오류: 3번: 사실과 다르다", retry_from="script")
+        self.post(f"/jobs/{job_id}/reset?from=script")
+        self.run_step(job_id, "script")
+        self.run_step(job_id, "review")  # 치명 오류
+        review.fail = StepFailure("deterministic", LOW, retry_from="script")
+        self.post(f"/jobs/{job_id}/reset?from=script")
+        self.run_step(job_id, "script")
+        self.run_step(job_id, "review")  # 점수 미달
+
+        self.app.state.telegram_poller.remind_due()
+
+        (q,) = self.questions()
+        self.assertIn(f"ro:{job_id}", str(q["reply_markup"]))
+
+    def test_running_job_with_no_step_shows_as_next_in_line(self):
+        job_id = self.stuck_job(3)
+        self.app.state.telegram_poller.remind_due()
+        self.tg.press(f"ro:{job_id}")
+        self.poll()
+
+        text = self.get("/overview").json()["text"]
+
+        self.assertNotIn("( 단계)", text)
+        self.assertIn("1화 배우기 — 🟡 만들 차례", text)
+
+
 class FixOutlineTest(StuckCase):
     def test_fix_rewrites_outline_from_feedback_and_resets_to_topic(self):
         job_id = self.stuck_job(3)

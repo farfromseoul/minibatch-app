@@ -105,3 +105,10 @@ test("개요를 고친 뒤에는 되돌리기 횟수를 새로 센다", () => {
                  { reason: "reset from=topic" }]);
   assert.equal(decide(j, P, opt).action, "reset");
 });
+
+test("검토 치명 오류로 되돌리기를 다 써도 조용히 끝 (job-api 가 점수 미달과 같이 세어 묻는다)", () => {
+  const f = run("review", "failed", { kind: "deterministic", retryFrom: "script", error: "검토에서 치명 오류: 3번: 사실과 다르다" });
+  const j = job("FAILED", [run("topic", "succeeded"), run("script", "succeeded"), f],
+                [{ reason: "reset from=script" }, { reason: "reset from=script" }]);
+  assert.equal(decide(j, P, opt).action, "stop");
+});

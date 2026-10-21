@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
@@ -22,7 +22,9 @@ from . import review
 from .generation import _ask
 from .status import set_status
 
-LOW_SCORE = "검토 점수 미달"
+# 대본 검토의 결정적 실패: 점수 미달과 치명 오류 둘 다 대본을 다시 써야 하는 실패라 같이 센다
+# (2026-10-21 실제: 점수 미달만 세다가 '미달 2 + 치명 1' 인 6화에 질문을 보내지 않았다. decide.mjs 도 같은 기준)
+REVIEW_FAILS = ("검토 점수 미달", "검토에서 치명 오류")
 STUCK_AFTER = 3  # 생산 워크플로가 두 번 되돌려 세 번 써 본 뒤 (decide.mjs maxResets 2)
 FIXED = "개요 고침"  # 이 이유의 작업 이력 뒤로 실패를 다시 센다 (decide.mjs 도 되돌리기 횟수를 여기서부터 센다)
 
@@ -37,9 +39,9 @@ def _since_fix(s: Session, job: Job) -> Optional[datetime]:
 
 
 def low_score_failures(s: Session, job: Job) -> list[str]:
-    """마지막 개요 고침 뒤 점수 미달로 떨어진 검토의 의견 (되돌려서 지워진 시도도 센다)"""
+    """마지막 개요 고침 뒤 대본 검토에서 떨어진 의견 (점수 미달·치명 오류, 되돌려서 지워진 시도도 센다)"""
     q = select(StepRun).where(StepRun.job_id == job.id, StepRun.step == "review", StepRun.status == "failed",
-                              StepRun.error.like(f"{LOW_SCORE}%"))
+                              StepRun.kind == "deterministic", or_(*[StepRun.error.like(f"{p}%") for p in REVIEW_FAILS]))
     since = _since_fix(s, job)
     if since is not None:
         q = q.where(StepRun.started_at > since)

@@ -25,7 +25,7 @@ export function decide(job, pipeline, opt) {
       if (resets < opt.maxResets) {
         return { action: "reset", from: f.retryFrom, waitSec: 2, message: `${what} → ${f.retryFrom} 부터 다시 (${resets + 1}번째): ${f.error}` };
       }
-      if (f.step === "review" && (f.error || "").startsWith("검토 점수 미달")) {
+      if (f.step === "review" && ["검토 점수 미달", "검토에서 치명 오류"].some((p) => (f.error || "").startsWith(p))) {
         // job-api 가 텔레그램으로 [개요 고쳐 다시][건너뛰기] 를 묻는다. 실패 알림을 겹쳐 보내지 않는다 (2026-10-21)
         return { action: "stop", message: `대본 검토 ${resets + 1}번 미달: 텔레그램에서 [개요 고쳐 다시] 또는 [건너뛰기]` };
       }

@@ -49,9 +49,9 @@ def job_label(s: Session, job: Job) -> str:
         return "🟢 승인됨, 공개 전환이 안 됨 (n8n 2번 폼 또는 POST /jobs/{id}/publish 로 다시)"
     if st == "REVIEW":
         return "🟠 검토 대기: 비공개로 올라감, 텔레그램 [승인(공개)] 필요" if pub and pub.video_id else "🟠 검토 대기"
-    if st == "RUNNING":
+    if st == "RUNNING" and job.current_step:
         return f"🔵 만드는 중 ({step} 단계)"
-    if st == "PENDING":
+    if st in ("PENDING", "RUNNING"):  # 되돌린 직후처럼 아직 시작한 단계가 없다
         return "🟡 만들 차례 (다음 생산 시각에 이어서)"
     if st == "WAITING":
         run = _last_run(s, job.id)
