@@ -77,9 +77,9 @@ test("앞 화 업로드 대기(blocked)면 다음 작업으로, 풀렸으면(blo
   assert.deepEqual(freed, { action: "run", step: "upload", waitSec: 5 });
 });
 
-test("반려·이미 승인된 작업은 손대지 않는다", () => {
+test("반려된 작업은 멈추고, 이미 승인된 작업은 손대지 않고 다음 작업으로", () => {
   assert.equal(decide(job("REJECTED"), P, opt).action, "stop");
-  assert.equal(decide(job("PUBLISHED"), P, opt).action, "stop");
+  assert.equal(decide(job("PUBLISHED"), P, opt).action, "next");
 });
 
 test("너무 오래 돌면 알림 (n8n 실행이 끝없이 이어지지 않게)", () => {
@@ -111,4 +111,12 @@ test("검토 치명 오류로 되돌리기를 다 써도 조용히 끝 (job-api 
   const j = job("FAILED", [run("topic", "succeeded"), run("script", "succeeded"), f],
                 [{ reason: "reset from=script" }, { reason: "reset from=script" }]);
   assert.equal(decide(j, P, opt).action, "stop");
+});
+
+// 2026-10-21 실제: 7화가 업로드되자마자 텔레그램으로 승인(공개)되자, 다음 확인에서 '이미 검토를 지났다'로 stop →
+// 실행 전체가 끝나 8~10화를 만들지 않았다. 검토를 지난 작업은 다음 작업으로 넘어간다
+test("검토 대기 사이에 승인(공개)된 작업은 다음 작업으로", () => {
+  for (const status of ["APPROVED", "SCHEDULED", "PUBLISHED"]) {
+    assert.equal(decide(job(status), P, opt).action, "next", status);
+  }
 });

@@ -13,7 +13,8 @@ export function decide(job, pipeline, opt) {
   const firstFailed = () => pipeline.map((s) => last[s]).find((r) => r && r.status === "failed");
 
   if (job.status === "REVIEW") return { action: "done" };
-  if (["APPROVED", "SCHEDULED", "PUBLISHED"].includes(job.status)) return { action: "stop", message: `이미 검토를 지났다: ${job.status}` };
+  // 검토 대기가 되자마자 텔레그램으로 승인(공개)되면 여기로 온다. 실행을 끝내지 않고 다음 작업으로 (2026-10-21: 8~10화를 안 만들었다)
+  if (["APPROVED", "SCHEDULED", "PUBLISHED"].includes(job.status)) return { action: "next", message: `이미 검토를 지났다: ${job.status}` };
   if (job.status === "REJECTED") return { action: "stop", message: "반려된 작업" };
   if (opt.runIndex >= opt.maxRuns) return { action: "fail", message: `너무 오래 끝나지 않는다 (확인 ${opt.runIndex}번)` };
 
