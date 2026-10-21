@@ -7,4 +7,5 @@ summary: hook 질문에 답하는 결론 한 문장. body 의 정의나 문장�
 titleCandidates: 제목 후보 3개 (각 30자 이내, 과장·낚시 없이 무엇을 알려 주는지)
 hashtags: 해시태그 3~5개
 $series_block
+$review_feedback
 JSON 으로만 답한다.

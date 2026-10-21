@@ -199,6 +199,33 @@ class ReviewStepTest(LlmStepCase):
         self.assertIn("학습 방식", st["error"])
 
 
+class RewriteWithFeedbackTest(LlmStepCase):
+    """대본을 다시 쓸 때 직전 검토 지적을 넣는다 (2026-10-21 실제: 6화가 같은 개요로 처음부터 다시 쓰여
+    '키 합의를 풀어 써라' 를 세 번 연속 받았다)"""
+
+    def test_first_script_has_no_feedback(self):
+        self.llm.responses = [script_of(38, 8)]
+
+        self.job_until("script")
+
+        self.assertNotIn("검토에서 떨어졌다", self.llm.last_user_text())
+
+    def test_rewrite_after_review_failure_includes_its_issues(self):
+        low = {"issues": [{"line": 4, "severity": "warning", "reason": "'키 합의'를 풀어 주세요"}],
+               "scores": dict(GOOD_SCORES, clarity=2), "verdict": "fail"}
+        self.llm.responses = [script_of(38, 8), low, script_of(38, 8)]
+        job_id = self.new_job()
+        for step in ("topic", "script", "review"):
+            self.run_step(job_id, step)
+        self.post(f"/jobs/{job_id}/reset?from=script")
+
+        self.run_step(job_id, "script")
+
+        prompt = self.llm.last_user_text()
+        self.assertIn("검토에서 떨어졌다", prompt)
+        self.assertIn("키 합의", prompt)
+
+
 class ScenesStepTest(LlmStepCase):
     def sentences(self, script):
         return [script["hook"], *script["body"], script["summary"]]

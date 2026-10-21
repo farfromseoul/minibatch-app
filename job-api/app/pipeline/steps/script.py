@@ -56,6 +56,21 @@ def _schema(series: dict | None, body_n: int) -> dict:
     return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
 
 
+def _review_feedback(ctx: StepContext) -> str:
+    """다시 쓰는 대본이면 직전 검토에서 떨어진 이유 (마지막 개요 고침 뒤, 최근 2번).
+    2026-10-21 실제: 되돌려서 같은 개요로 처음부터 다시 쓰니 '키 합의를 풀어 써라' 를 세 번 연속 받았다"""
+    from app.db.models import Job
+    from app.domain import stuck  # 단계 모듈이 도메인 전체를 먼저 불러오지 않게
+    with ctx.db() as s:
+        job = s.get(Job, ctx.job_id)
+        errors = stuck.low_score_failures(s, job)[-2:] if job is not None else []
+    if not errors:
+        return ""
+    lines = "\n".join(f"- {e[:700]}" for e in errors)
+    return ("지난 대본이 검토에서 떨어졌다. 아래 지적을 이번 대본에서 반드시 고친다. 지적받은 표현은 그대로 쓰지 말고, "
+            f"낯선 용어는 처음 나올 때 일상어로 풀어 쓴다:\n{lines}\n")
+
+
 def _series_block(series: dict | None) -> str:
     if not series:
         return ""
@@ -97,7 +112,8 @@ class ScriptStep:
         messages, version = render_messages(
             "script", topic=job["topic"], audience=cat.get("audience", ""), structure=rules.get("structure", ""),
             target_chars=target, max_sentence=max_sentence, forbidden=", ".join(rules.get("forbidden", [])),
-            sentences=total_n, body_sentences=body_n, min_chars=min_chars, series_block=_series_block(series))
+            sentences=total_n, body_sentences=body_n, min_chars=min_chars, series_block=_series_block(series),
+            review_feedback=_review_feedback(ctx))
         schema = _schema(series, body_n)
 
         def check(data: Any) -> list[str]:
