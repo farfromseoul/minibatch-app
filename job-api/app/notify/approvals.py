@@ -91,6 +91,9 @@ class TelegramApprovals:
         self.runner = self.providers = None  # 계획 생성에 쓴다. 서버가 만든 뒤 attach 로 넣는다
         self.asmr = None  # ASMR 채널 버튼(ua·up·ux, D38). 서버가 만든 뒤 넣는다
         self.news = None  # IT 뉴스 후보·[이걸로](n:, D40). 서버가 만든 뒤 넣는다
+        # 몇 분 걸리는 일(/news 평가)을 받기 루프 밖에서 돌린다. 그동안에도 버튼·다시 알림이 처리된다 (2026-10-26)
+        self.run_background: Callable[[Callable[[], None]], None] = (
+            lambda fn: threading.Thread(target=fn, name="news", daemon=True).start())
 
     def attach(self, runner, providers) -> None:
         self.runner, self.providers = runner, providers
@@ -341,18 +344,26 @@ class TelegramApprovals:
         if self.news is None:
             self._safe_send("IT 뉴스 기능이 꺼져 있습니다", None)
             return
-        try:
-            if arg in ("더", "more"):
-                if not self.news.more():
-                    self._safe_send("📰 더 보낼 후보가 없습니다. /news 로 새 글을 모읍니다.", None)
-            elif arg:
-                self._safe_send("⏳ 그 글을 평가하는 중입니다", None)
-                self.news.add_link(arg)
-            else:
-                self._safe_send("⏳ GeekNews 새 글을 모아 평가하는 중입니다 (몇 분 걸립니다)", None)
-                self.news.daily()
-        except ApiError as e:
-            self._safe_send(f"⚠️ {e.message}", None)
+        if arg in ("더", "more"):
+            if not self.news.more():
+                self._safe_send("📰 더 보낼 후보가 없습니다. /news 로 새 글을 모읍니다.", None)
+            return
+        if arg:
+            self._safe_send("⏳ 그 글을 평가하는 중입니다", None)
+            work = lambda: self.news.add_link(arg)  # noqa: E731
+        else:
+            self._safe_send("⏳ GeekNews 새 글을 모으는 중입니다. 평가되는 대로 하나씩 보냅니다 (그동안 다른 버튼도 됩니다)", None)
+            work = self.news.daily
+
+        def run() -> None:
+            try:
+                work()
+            except ApiError as e:
+                self._safe_send(f"⚠️ {e.message}", None)
+            except Exception:  # 따로 도는 일이라 실패를 알려야 한다
+                log.exception("/news 실패")
+                self._safe_send("⚠️ /news 를 끝내지 못했습니다. 잠시 뒤 다시 보내 주세요.", None)
+        self.run_background(run)
 
     def plan_sent(self) -> dict[str, str]:
         return dict(self._load().get("planSent") or {})

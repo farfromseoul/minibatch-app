@@ -2,7 +2,8 @@
 
 - collect: GeekNews RSS 에서 최근 48시간 새 글을 넣고, 글 페이지에서 원문 링크·추천 수를 읽고(후보마다 한 번, 요청 사이 쉼),
   추천 수가 높은 글부터 원문을 읽어 LLM 으로 평가한다(점수·우리 말 3줄 요약·품질·저작권 판단). 원문을 못 읽으면 '원문 확인 불가'
-- send: 아직 안 보낸 평가된 후보를 점수 순으로 텔레그램에 보낸다(후보마다 [이걸로])
+- send: 평가되는 대로 바로 보낸다(후보마다 [이걸로], 한 번에 news_candidates 개). 끊긴 실행이 평가만 하고 못 보낸 후보는
+  다음 실행이 먼저 보낸다 (2026-10-26: 다 평가한 뒤 한꺼번에 보내다가 재시작으로 하나도 못 보냈다)
 - pick: [이걸로] → it-news 단독 작업. 하루 news_daily_max(기본 3)까지
 - fetch_article: 주제 단계가 원문을 읽을 때 같은 SSRF 검사로
 """
@@ -67,8 +68,8 @@ class NewsService:
 
     # ---------- 모으기·평가
 
-    def collect(self) -> int:
-        """새 글을 넣고 평가한다. 새로 평가한 수"""
+    def collect(self, on_ready: Optional[Callable[[str], None]] = None) -> int:
+        """새 글을 넣고 평가한다. 새로 평가한 수. on_ready: 원문을 읽어 평가한 후보마다 바로 부른다(보내기)"""
         now = self.clock()
         feed = self._get(self.settings.extra.get("news_feed_url", geeknews.FEED_URL))
         if feed is None:
@@ -81,7 +82,7 @@ class NewsService:
                     s.add(NewsItem(id=f"gn-{e['id']}", gn_url=e["url"], title=e["title"][:300], gn_summary=e["summary"][:4000],
                                    published_at=e["published"], status="NEW", created_at=now, updated_at=now))
             s.commit()
-        return self._evaluate_new()
+        return self._evaluate_new(on_ready)
 
     def _read_topic(self, item_id: str) -> None:
         with self.db() as s:
@@ -97,7 +98,7 @@ class NewsService:
                 item.readable, item.status = False, "EVALUATED"
             s.commit()
 
-    def _evaluate_new(self) -> int:
+    def _evaluate_new(self, on_ready: Optional[Callable[[str], None]] = None) -> int:
         with self.db() as s:
             new = list(s.scalars(select(NewsItem.id).where(NewsItem.status == "NEW", NewsItem.source_url.is_(None))
                                  .order_by(NewsItem.published_at.desc(), NewsItem.id.desc()).limit(MAX_TOPIC_PAGES)))
@@ -108,8 +109,14 @@ class NewsService:
                                   .order_by(NewsItem.points.desc(), NewsItem.id.desc()).limit(MAX_EVAL)))
         done = 0
         for item_id in todo:
-            self.evaluate(item_id)
+            try:
+                self.evaluate(item_id)
+            except Exception as e:  # 한 글의 평가 실패가 나머지를 막지 않게. NEW 로 남아 다음 실행에서 다시
+                log.warning("후보 평가 실패 %s: %s", item_id, getattr(e, "message", type(e).__name__))
+                continue
             done += 1
+            if on_ready is not None:
+                on_ready(item_id)
         return done
 
     def evaluate(self, item_id: str) -> None:
@@ -138,48 +145,62 @@ class NewsService:
     # ---------- 보내기
 
     def daily(self) -> dict[str, Any]:
-        """매일 07:00 (n8n 7번) 과 /news: 모으고 평가하고 보낸다"""
+        """매일 07:00 (n8n 7번) 과 /news: 못 보낸 후보 먼저 → 새 글을 모아 평가되는 대로 보낸다 → 끝에 요약"""
         with self._lock:
-            evaluated = self.collect()
-            sent = self._send_next(header=True)
-        return {"evaluated": evaluated, "sent": sent}
+            sent = self._send_ready(self.settings.news_candidates)
+
+            def ready(item_id: str) -> None:
+                if sent[0] < self.settings.news_candidates:
+                    sent[0] += self._send_ready(1, only=item_id, start=sent[0] + 1)[0]
+
+            evaluated = self.collect(on_ready=ready)
+            self._summary(sent[0], more_hint=True)
+        return {"evaluated": evaluated, "sent": sent[0]}
 
     def more(self) -> int:
         with self._lock:
-            return self._send_next(header=False)
+            n = self._send_ready(self.settings.news_candidates)[0]
+            if n:
+                self._summary(n, more_hint=True)
+            return n
 
     def _picked_today(self, s) -> int:
         return s.scalar(select(func.count()).select_from(NewsItem)
                         .where(NewsItem.picked_at >= kst_day_start_utc(self.clock()))) or 0
 
-    def _send_next(self, header: bool) -> int:
+    def _send_ready(self, limit: int, only: Optional[str] = None, start: int = 1) -> list[int]:
+        """평가했지만 안 보낸 후보를 점수 순으로 limit 개 보낸다. [보낸 수] (daily 의 클로저가 고칠 수 있게 리스트)"""
         now = self.clock()
         with self.db() as s:
-            q = (select(NewsItem).where(NewsItem.status == "EVALUATED", NewsItem.created_at >= now - WINDOW)
-                 .order_by(NewsItem.readable.desc(), NewsItem.score.desc(), NewsItem.points.desc(), NewsItem.id))
-            items = list(s.scalars(q))
-            good = [i for i in items if i.readable][: self.settings.news_candidates]
-            bad = [i for i in items if not i.readable]
+            q = (select(NewsItem).where(NewsItem.status == "EVALUATED", NewsItem.readable.is_(True),
+                                        NewsItem.created_at >= now - WINDOW)
+                 .order_by(NewsItem.score.desc(), NewsItem.points.desc(), NewsItem.id))
+            if only:
+                q = q.where(NewsItem.id == only)
+            items = list(s.scalars(q.limit(limit)))
+            for rank, item in enumerate(items, start=start):
+                self._send_item(item, rank)
+                item.status, item.sent_at = "SENT", now
+            s.commit()
+            return [len(items)]
+
+    def _summary(self, sent: int, more_hint: bool) -> None:
+        """보낸 수·오늘 고른 수·원문 확인 불가 글. 원문을 못 읽은 글은 여기서 '보냄'으로 정리한다"""
+        now = self.clock()
+        with self.db() as s:
+            bad = list(s.scalars(select(NewsItem).where(NewsItem.status == "EVALUATED", NewsItem.readable.is_(False))))
             picked = self._picked_today(s)
-            if not good:
+            if not sent:
                 self._send("📰 새 후보가 없습니다. 새 글이 올라오면 /news 로 다시 모읍니다.")
-                for i in bad:
-                    i.status, i.sent_at = "SENT", now
-                s.commit()
-                return 0
-            if header:
-                lines = [f"📰 오늘의 IT 뉴스 후보 {len(good)}개 · 오늘 고른 {picked}/{self.settings.news_daily_max}",
-                         "원문을 읽어 보고 [이걸로] 를 누르세요. 더 보기: /news 더 · 도움말: /help"]
+            else:
+                lines = [f"📰 후보 {sent}개를 보냈습니다 · 오늘 고른 {picked}/{self.settings.news_daily_max}",
+                         "원문을 읽어 보고 [이걸로 만들기] 를 누르세요." + (" 더 보기: /news 더" if more_hint else "")]
                 if bad:
                     lines.append("원문 확인 불가(고를 수 없음): " + ", ".join(i.title[:30] for i in bad[:5]))
                 self._send("\n".join(lines))
-            for rank, item in enumerate(good, start=1):
-                self._send_item(item, rank)
-                item.status, item.sent_at = "SENT", now
             for i in bad:
                 i.status, i.sent_at = "SENT", now
             s.commit()
-            return len(good)
 
     def _send_item(self, item: NewsItem, rank: int) -> None:
         points = f" · GeekNews {item.points}P" if item.points is not None else ""
@@ -229,7 +250,9 @@ class NewsService:
                 needs_eval = s.get(NewsItem, f"gn-{tid}").status == "NEW"
             if needs_eval:
                 self.evaluate(f"gn-{tid}")
-            self._send_next(header=False)
+            n = self._send_ready(1, only=f"gn-{tid}")[0]
+            if not n:
+                self._send("📰 그 글은 원문을 읽을 수 없어 후보로 만들 수 없습니다.")
 
     # ---------- 고르기
 

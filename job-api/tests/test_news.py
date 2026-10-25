@@ -83,6 +83,7 @@ class NewsCase(TelegramCase):
         self.app.state.news.http = http
         self.app.state.news.resolve = public_resolver
         self.app.state.news.pause_sec = 0
+        self.app.state.telegram_poller.run_background = lambda fn: fn()  # 테스트는 /news 를 바로 끝까지 돌린다
 
     def make_providers(self):
         return FakeRegistry(self.llm)
@@ -318,3 +319,44 @@ class ArticleTest(NewsCase):
     def test_non_http_scheme_is_refused(self):
         svc: NewsService = self.app.state.news
         self.assertIsNone(article.fetch_text("file:///etc/passwd", svc.http, svc.resolve))
+
+
+class SendAsEvaluatedTest(NewsCase):
+    """평가되는 대로 바로 보낸다 (2026-10-26 실제: 평가를 다 마친 뒤 한꺼번에 보내는 구조라, 느린 평가 중에
+    배포로 job-api 가 다시 시작되자 후보가 하나도 가지 않았다)"""
+
+    def test_failed_evaluation_does_not_lose_already_sent_candidate(self):
+        from tests.fakes import transient
+        self.three()
+        self.llm.responses = [evaluation(9), transient()]  # 두 번째 평가에서 LLM 일시 오류
+
+        self.daily()
+
+        self.assertEqual([m["reply_markup"]["inline_keyboard"][0][0]["callback_data"] for m in self.candidates()], ["n:gn-102"])
+        self.assertEqual(self.get("/news/items?status=NEW").json()["items"][0]["id"], "gn-101")  # 다음 실행에서 다시 평가
+
+    def test_evaluated_but_unsent_from_interrupted_run_is_sent_first(self):
+        self.three()
+        self.llm.responses = [evaluation(9), evaluation(6)]
+        self.app.state.news.collect()  # 평가까지 하고 보내기 전에 끊겼다고 친다
+        self.web.set_feed([])
+
+        self.daily()
+
+        self.assertEqual(len(self.candidates()), 2)
+
+
+class BackgroundNewsTest(NewsCase):
+    def test_news_command_runs_in_background_and_buttons_still_work(self):
+        started = []
+        self.app.state.telegram_poller.run_background = started.append  # 아직 돌리지 않는다
+        job_id = self.new_job()
+        self.run_until(job_id, "review")
+        self.tg.say("/news")
+        self.tg.press(f"a:{job_id}")
+
+        self.poll()
+
+        self.assertEqual(len(started), 1)  # 평가는 따로 맡겼고
+        self.assertEqual(self.get(f"/jobs/{job_id}").json()["status"], "APPROVED")  # 그동안 버튼은 처리됐다
+        self.assertIn("모으는 중", " ".join(m["text"] for m in self.tg.sent("sendMessage")))
