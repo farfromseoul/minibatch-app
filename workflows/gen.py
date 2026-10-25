@@ -483,6 +483,26 @@ for a, b in [(t1, cfg), (t2, cfg), (cfg, scan), (scan, msg), (msg, tg)]:
     w.link(a, b)
 w.save("minibatch-6-asmr.json", about=ABOUT6, notes=NOTES6)
 
+# ---------------------------------------------------------------- 7. IT 뉴스 후보 (D40, 2026-10-25)
+w = WF("MiniBatch 7 IT 뉴스 후보")
+t1 = cron(w, "매일 07시", ["0 0 7 * * *"], [0, 0])
+t2 = manual(w, [0, 200])
+cfg = code(w, "설정", CONFIG_JS, [220, 100])
+nd = http(w, "후보 모아 보내기", "POST", "={{ $('설정').first().json.api }}/news/daily", [440, 100], full=True, timeout=1800000)
+msg = code(w, "알림 문장", """// 후보 메시지는 job-api 가 텔레그램으로 보낸다 (D40). 여기서는 실패만 알린다
+const r = $input.first().json;
+if (r.statusCode === 200) return [];
+return [{ json: { text: `⚠️ MiniBatch IT 뉴스 후보 모으기 실패 (${r.statusCode}): ${r.body?.error?.message || ''}\n텔레그램 /news 로 다시 할 수 있습니다` } }];""", [660, 100])
+tg = telegram(w, "알림: 뉴스", "={{ $json.text }}", [880, 100])
+for a, b in [(t1, cfg), (t2, cfg), (cfg, nd), (nd, msg), (msg, tg)]:
+    w.link(a, b)
+w.save("minibatch-7-news.json", about="""## 7. IT 뉴스 후보 (D40)
+**언제**: 매일 07:00 (수동 실행도 됨, 텔레그램 /news 와 같음)
+**하는 일**: job-api 가 GeekNews RSS 새 글(48시간 안)을 모으고, 글 페이지에서 원문 링크·추천 수를 읽고(최대 15개), 원문을 읽어 LLM 으로 평가(점수·3줄 요약·품질·저작권)한 뒤 상위 5개를 텔레그램으로 보낸다
+**고르기**: 텔레그램 [이걸로 만들기] → it-news 단독 작업(하루 최대 3편) → 1번 생산이 시리즈보다 먼저 만든다
+**지금 상태 보기**: 텔레그램 /status 의 [IT 뉴스] 줄, GET /news/items""",
+       notes={"후보 모아 보내기": "POST /news/daily: 모으기·평가·보내기 (몇 분 걸림)", "알림 문장": "실패만 텔레그램으로"})
+
 # 노드 이름이 연결과 맞는지 확인
 for f in sorted(OUT.glob("*.json")):
     d = json.loads(f.read_text(encoding="utf-8"))

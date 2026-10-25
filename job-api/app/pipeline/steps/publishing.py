@@ -102,7 +102,8 @@ def quota_retry_at(reason: Optional[str], now: Optional[datetime] = None) -> str
     return next_quota_reset(now)
 
 
-def _description(script: dict[str, Any], playlist_id: Optional[str], credits: Optional[list] = None) -> str:
+def _description(script: dict[str, Any], playlist_id: Optional[str], credits: Optional[list] = None,
+                 news: Optional[dict[str, Any]] = None) -> str:
     parts = [p for p in (script.get("hook"), script.get("summary")) if p]
     tags = " ".join(h if h.startswith("#") else f"#{h}" for h in script.get("hashtags", []))
     if tags:
@@ -114,6 +115,9 @@ def _description(script: dict[str, Any], playlist_id: Optional[str], credits: Op
         by_site.setdefault(c.get("site", ""), []).append(c.get("user", ""))
     for site, users in by_site.items():
         parts.append(f"영상: {site} ({', '.join(u for u in users if u)})")
+    if news:  # IT 뉴스 출처 (D40)
+        parts.append(f"원문: {news.get('sourceTitle') or ''} {news['sourceUrl']}".replace("  ", " ")
+                     + f"\nGeekNews 소개: {news['gnUrl']}")
     return "\n\n".join(parts)  # 고지 문구는 연결부(upload_video)가 끝에 붙인다
 
 
@@ -173,7 +177,7 @@ class UploadStep:
         else:
             title = (f"{info['title']} {info['number']}화: {info['episodeTitle']}" if info
                      else (script.get("titleCandidates") or [job["topic"]])[0])
-            res = yt.upload_video(video, title=title, description=_description(script, playlist_id, visuals.get("credits")), disclosure=disclosure,
+            res = yt.upload_video(video, title=title, description=_description(script, playlist_id, visuals.get("credits"), job.get("news")), disclosure=disclosure,
                                   category_id=str(ycfg.get("category_id", "28")),
                                   tags=[h.lstrip("#") for h in script.get("hashtags", [])], synthetic=synthetic)
             video_id, replaces = res["id"], prev_video

@@ -35,6 +35,28 @@ WHO = "텔레그램"
 REMIND_SEC = 6 * 3600  # 검토 대기 다시 알림 간격
 MAX_REMIND = 5         # 한 번에 다시 보내는 최대 수
 PLAN_REMIND_SEC = 24 * 3600  # 승인 대기 계획 다시 알림 간격
+HELP = """🤖 MiniBatch 명령
+/status — 현황: 시리즈 화별 상태, 다음 계획, IT 뉴스, ASMR, 오늘 업로드
+/news — IT 뉴스 후보 받기 (GeekNews 새 글을 모아 평가해 보냄)
+/news 더 — 아직 안 보낸 다음 후보
+/news <GeekNews 글 주소> — 그 글을 평가해 후보로 보냄
+/series 주제, 화수 — 다음 시리즈 계획 만들기 (화수 3~20, 빼면 10)
+/help — 이 도움말
+
+버튼
+· 영상 검토 대기: [승인(공개)] [반려] — 시리즈는 앞 화부터
+· 시리즈 계획: [계획 승인] [다른 주제로]
+· 다음 시리즈 주제 질문: [자동으로 정하기] [오늘은 건너뛰기] — 답장은 '주제, 화수'
+· 대본이 3번 통과 못 함: [개요 고쳐 다시] [건너뛰기]
+· IT 뉴스 후보: [이걸로 만들기] — 하루 기본 1편, 최대 3편
+· ASMR: [업로드 승인] [공개 승인] [버리기]
+
+자동으로 하는 일
+· 생산: 06~23시 매시 정각 (n8n 1번)
+· IT 뉴스 후보: 매일 07:00 (n8n 7번)
+· 다음 시리즈 주제 질문: 남은 화가 적으면 하루 한 번 (n8n 3번)
+· ASMR inbox 확인: 매시 정각 (n8n 6번)
+· 승인 대기 다시 알림: 검토 6시간, 계획·멈춘 화 하루 한 번"""
 DEFAULT_COUNT, MIN_COUNT, MAX_COUNT = 10, 3, 20  # 시리즈 화 수 (D37)
 COUNT = re.compile(r"^(\d+)\s*(화|편)?$")
 EXAMPLE = "예) 쿠버네티스 기초, 8"
@@ -66,6 +88,7 @@ class TelegramApprovals:
         self._state_lock = threading.Lock()  # API(묻기)와 받기 루프(답)가 같은 상태 파일을 고친다
         self.runner = self.providers = None  # 계획 생성에 쓴다. 서버가 만든 뒤 attach 로 넣는다
         self.asmr = None  # ASMR 채널 버튼(ua·up·ux, D38). 서버가 만든 뒤 넣는다
+        self.news = None  # IT 뉴스 후보·[이걸로](n:, D40). 서버가 만든 뒤 넣는다
 
     def attach(self, runner, providers) -> None:
         self.runner, self.providers = runner, providers
@@ -151,6 +174,10 @@ class TelegramApprovals:
             return self._question_button(target)
         if kind == "pc":
             return self._change_plan(target)
+        if kind == "n":  # IT 뉴스 [이걸로] (D40)
+            if self.news is None:
+                return "IT 뉴스 기능이 꺼져 있습니다"
+            return self.news.pick(target)
         if kind == "ro":
             return self._fix_outline(target)
         if kind == "rs":
@@ -257,8 +284,15 @@ class TelegramApprovals:
         if chat != self.bot.chat_id or str((msg.get("from") or {}).get("id", "")) != self.bot.chat_id:
             return  # 다른 대화에는 답하지 않는다
         text = str(msg.get("text") or "").strip()
-        if text.split(" ", 1)[0].split("@", 1)[0] == "/status":  # 현황 (n8n 0번 현황 폼과 같은 내용)
+        cmd = text.split(" ", 1)[0].split("@", 1)[0]
+        if cmd == "/status":  # 현황 (n8n 0번 현황 폼과 같은 내용)
             self._safe_send(self.status_text(), None)
+            return
+        if cmd in ("/help", "/start"):
+            self._safe_send(HELP, None)
+            return
+        if cmd == "/news":
+            self._news_command(text.split(" ", 1)[1].strip() if " " in text else "")
             return
         with self._state_lock:
             st = self._load()
@@ -298,6 +332,24 @@ class TelegramApprovals:
                 return "🤖 주제를 자동으로 정합니다. 계획이 나오면 [계획 승인] 메시지를 보냅니다."
         return f"모르는 버튼: q:{target}"
 
+    def _news_command(self, arg: str) -> None:
+        """/news: 새 글 모아 평가해 보내기, /news 더: 다음 후보, /news <GeekNews 주소>: 그 글을 평가해 보내기"""
+        if self.news is None:
+            self._safe_send("IT 뉴스 기능이 꺼져 있습니다", None)
+            return
+        try:
+            if arg in ("더", "more"):
+                if not self.news.more():
+                    self._safe_send("📰 더 보낼 후보가 없습니다. /news 로 새 글을 모읍니다.", None)
+            elif arg:
+                self._safe_send("⏳ 그 글을 평가하는 중입니다", None)
+                self.news.add_link(arg)
+            else:
+                self._safe_send("⏳ GeekNews 새 글을 모아 평가하는 중입니다 (몇 분 걸립니다)", None)
+                self.news.daily()
+        except ApiError as e:
+            self._safe_send(f"⚠️ {e.message}", None)
+
     def plan_sent(self) -> dict[str, str]:
         return dict(self._load().get("planSent") or {})
 
@@ -320,7 +372,7 @@ class TelegramApprovals:
         return {"label": label, "askedDate": st.get("askedDate"), "waiting": bool(st.get("waiting")), "want": want}
 
     def status_text(self) -> str:
-        return overview.collect(self.db, self.clock, telegram=self, asmr=self.asmr)["text"]
+        return overview.collect(self.db, self.clock, telegram=self, asmr=self.asmr, news=self.news)["text"]
 
     def _want(self, st: dict[str, Any], theme: Optional[str], count: int) -> None:
         """만들 계획을 상태 파일에 적는다. 실제 생성은 make_wanted_plan (제작 중이면 끝난 뒤)"""

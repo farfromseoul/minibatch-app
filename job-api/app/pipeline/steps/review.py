@@ -61,8 +61,11 @@ class ReviewStep:
                 warnings.append({"rule": "number", "line": i, "text": s})
 
         numbered = "\n".join(f"{i}. {s}" for i, s in enumerate(sentences, start=1))
+        news = job.get("news")
+        facts = ("\n원문 사실 목록(IT 뉴스, D40). 대본의 숫자·이름·날짜·주장이 이 목록과 다르거나 목록에 없으면 critical:\n"
+                 + "\n".join(f"- {f}" for f in news["facts"]) + "\n") if news else ""
         messages, version = render_messages("review", topic=job["topic"], audience=cat.get("audience", ""), numbered=numbered,
-                                            rules=", ".join(cat.get("review", {}).get("rules", ["사실 오류"])))
+                                            rules=", ".join(cat.get("review", {}).get("rules", ["사실 오류"])), facts=facts)
 
         def check(d: Any) -> list[str]:
             if not (isinstance(d, dict) and isinstance(d.get("issues"), list) and d.get("verdict") in ("pass", "fail")):

@@ -44,12 +44,12 @@ def _check_duplicate(s: Session, settings, key: str, now: datetime) -> None:
 
 
 def _insert(s: Session, settings, now: datetime, *, topic: str, category: str, topic_id: Optional[int] = None,
-            series_id: Optional[str] = None, episode_number: Optional[int] = None) -> Job:
+            series_id: Optional[str] = None, episode_number: Optional[int] = None, extra: Optional[dict] = None) -> Job:
     key = normalize_topic(topic)
     _check_duplicate(s, settings, key, now)
     job = Job(id=_next_job_id(s, now), topic_id=topic_id, topic=topic, topic_key=key, category=category,
               series_id=series_id, episode_number=episode_number, status="PENDING", current_step=None,
-              video_engine="remotion", input={"topic": topic, "category": category}, created_at=now, updated_at=now)
+              video_engine="remotion", input={"topic": topic, "category": category, **(extra or {})}, created_at=now, updated_at=now)
     s.add(job)
     # relationship 을 선언하지 않아 저장 순서가 보장되지 않는다. 작업을 먼저 넣어야
     # 이 작업을 가리키는 기록(job_event, episode.job_id)이 외래 키에 걸리지 않는다
@@ -120,6 +120,12 @@ def create_job(s: Session, settings, now: datetime, *, topic: Optional[str], cat
         ensure_category(settings, category)
         return _insert(s, settings, now, topic=topic, category=category)
     return _auto_select(s, settings, now)
+
+
+def create_news_job(s: Session, settings, now: datetime, *, title: str, news: dict) -> Job:
+    """IT 뉴스 (D40): 텔레그램에서 고른 GeekNews 글. 단독 작업, 원문 정보는 작업 입력에 둔다(주제 단계가 원문을 읽는다)"""
+    ensure_category(settings, "it-news")
+    return _insert(s, settings, now, topic=title, category="it-news", extra={"news": news})
 
 
 def _auto_select(s: Session, settings, now: datetime) -> Job:

@@ -162,3 +162,29 @@ class AsmrVideo(Base):
     notified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # 마지막 승인 요청 알림 (다시 알림 기준)
     created_at: Mapped[datetime] = mapped_column(DateTime)
     updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class NewsItem(Base):
+    """IT 뉴스 후보: GeekNews 글 하나 (D40). 원문 전문은 두지 않는다(평가 결과와 링크만)."""
+
+    __tablename__ = "news_item"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)  # gn-<GeekNews 글 번호>
+    gn_url: Mapped[str] = mapped_column(String(300))
+    title: Mapped[str] = mapped_column(String(300))
+    gn_summary: Mapped[str] = mapped_column(Text)  # RSS 요약 (평가 입력·겹침 검사용. 영상에 옮기지 않는다)
+    published_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    source_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    points: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    readable: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)  # 원문을 열어 본문을 읽었나
+    score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    summary: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)  # 우리 말로 쓴 3줄
+    quality: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    copyright_risk: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # low | medium | high
+    copyright: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), index=True)  # NEW | EVALUATED | SENT | PICKED
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    picked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    job_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)

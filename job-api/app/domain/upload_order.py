@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
 from app.db.models import Episode, Job, Publication, Series, StepRun
@@ -63,7 +63,9 @@ def _wait_reason(s: Session, job: Job, now: datetime) -> Optional[str]:
 def next_job(s: Session, now: datetime) -> dict[str, Any]:
     """이어 할 작업 하나. 기다리는 이유가 남은 작업은 건너뛴다. 없으면 jobId 없음 → n8n 이 새 작업을 만든다"""
     skipped = []
-    for job in s.scalars(select(Job).where(Job.status.in_(RUNNABLE)).order_by(Job.created_at, Job.id)):
+    # 고른 IT 뉴스를 먼저 (D40: 늦으면 시의성을 잃는다). 그다음 만든 순서
+    first = case((Job.category == "it-news", 0), else_=1)
+    for job in s.scalars(select(Job).where(Job.status.in_(RUNNABLE)).order_by(first, Job.created_at, Job.id)):
         reason = _wait_reason(s, job, now)
         if reason is None:
             return {"jobId": job.id, "skipped": skipped}

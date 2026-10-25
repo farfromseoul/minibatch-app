@@ -34,6 +34,9 @@ class Settings:
     asmr_youtube_token_file: Path = Path("/run/minibatch/asmr-youtube/youtube_token.json")
     asmr_channel_id: str = ""  # 비어 있으면 올리지 않는다(다른 채널에 올리는 사고 방지). 비밀 값이 아니다
     asmr_daily_upload_limit: int = 3
+    # IT 뉴스 (D40): 하루 최대 고르는 편수, 한 번에 보내는 후보 수
+    news_daily_max: int = 3
+    news_candidates: int = 5
     extra: dict = field(default_factory=dict)
 
     @classmethod
@@ -59,6 +62,8 @@ class Settings:
             asmr_youtube_token_file=Path(env.get("MINIBATCH_ASMR_YOUTUBE_TOKEN_FILE", "/run/minibatch/asmr-youtube/youtube_token.json")),
             asmr_channel_id=env.get("MINIBATCH_ASMR_CHANNEL_ID", ""),
             asmr_daily_upload_limit=int(env.get("MINIBATCH_ASMR_DAILY_UPLOAD_LIMIT", "3")),
+            news_daily_max=int(env.get("MINIBATCH_NEWS_DAILY_MAX", "3")),
+            news_candidates=int(env.get("MINIBATCH_NEWS_CANDIDATES", "5")),
         )
 
     @property

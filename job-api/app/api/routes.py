@@ -361,7 +361,34 @@ def request_series(body: SeriesRequestBody, request: Request) -> dict[str, Any]:
 def get_overview(request: Request) -> dict[str, Any]:
     """시리즈 화별 상태(만듦·업로드 대기·검토·공개), 다음 계획(보냄·승인), 주제 질문, ASMR 을 한 번에. text 는 사람이 읽는 요약"""
     st = _st(request)
-    return overview.collect(st.db, st.clock, telegram=st.telegram, asmr=st.asmr)
+    return overview.collect(st.db, st.clock, telegram=st.telegram, asmr=st.asmr, news=getattr(st, "news", None))
+
+
+# ---------- IT 뉴스 (D40)
+
+
+@api.post("/news/daily")
+def news_daily(request: Request) -> dict[str, Any]:
+    """n8n 7번이 매일 07:00 부른다: GeekNews 새 글을 모아 평가하고 텔레그램으로 후보를 보낸다"""
+    return _st(request).news.daily()
+
+
+@api.get("/news/items")
+def news_items(request: Request, status: Optional[str] = Query(default=None)) -> dict[str, Any]:
+    from app.db.models import NewsItem
+    with _st(request).db() as s:
+        q = select(NewsItem).order_by(NewsItem.created_at.desc(), NewsItem.id.desc()).limit(100)
+        if status:
+            q = q.where(NewsItem.status == status)
+        return {"items": [{"id": x.id, "title": x.title, "status": x.status, "score": x.score, "points": x.points,
+                           "readable": x.readable, "copyrightRisk": x.copyright_risk, "sourceUrl": x.source_url,
+                           "gnUrl": x.gn_url, "jobId": x.job_id} for x in s.scalars(q)]}
+
+
+@api.post("/news/items/{item_id}/pick")
+def news_pick(item_id: str, request: Request) -> dict[str, Any]:
+    st = _st(request)
+    return {"message": st.news.pick(item_id)}
 
 
 # ---------- ASMR 채널 (D38)

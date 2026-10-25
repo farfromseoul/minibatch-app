@@ -20,9 +20,11 @@ from app.core.timeutil import utcnow
 from app.db.migrate import upgrade
 from app.db.session import make_engine, make_sessionmaker
 from app.media.ffmpeg import probe_video
+from app.news.service import NewsService
 from app.pipeline.pipeline import PIPELINE
 from app.pipeline.runner import Runner
 from app.pipeline.steps import default_steps
+from app.pipeline.steps.topic import TopicStep
 from app.providers import load_providers
 from app.notify.approvals import TelegramApprovals
 from app.notify.telegram import TelegramBot
@@ -70,8 +72,13 @@ def create_app(settings: Optional[Settings] = None, *, steps: Optional[dict] = N
         app.state.telegram = (TelegramApprovals(bot, settings=s, db=app.state.db, clock=clock,
                                                 youtube_factory=app.state.youtube_factory) if bot else None)
         app.state.telegram_poller = app.state.telegram
+        # IT 뉴스 (D40): 후보 모으기·평가·[이걸로]. 주제 단계가 같은 서비스로 원문을 읽는다(SSRF 검사)
+        app.state.news = NewsService(s, db=app.state.db, clock=clock, providers=registry, bot=bot)
+        if app.state.telegram is not None:
+            app.state.telegram.news = app.state.news
         app.state.runner = Runner(settings=s, db=app.state.db, pipeline=pipeline or PIPELINE, providers=registry,
-                                  steps={**default_steps(), **(steps or {})},  # 넘겨준 단계가 기본을 덮는다
+                                  steps={**default_steps(), "topic": TopicStep(news=app.state.news),
+                                         **(steps or {})},  # 넘겨준 단계가 기본을 덮는다
                                   executor=executor, notify=notify, clock=clock,
                                   on_review=app.state.telegram.notify_review if app.state.telegram else None)
         if app.state.telegram is not None:  # 텔레그램으로 받은 주제로 계획을 만들 때 쓴다 (D37)

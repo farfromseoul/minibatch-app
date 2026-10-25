@@ -84,7 +84,7 @@ def _episode(s: Session, e: Episode) -> dict[str, Any]:
 
 
 def build(s: Session, now: datetime, *, plan_sent: dict[str, str], question: dict[str, Any],
-          asmr: Optional[dict[str, Any]]) -> dict[str, Any]:
+          asmr: Optional[dict[str, Any]], news: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     series = []
     for x in s.scalars(select(Series).where(Series.status.in_(OPEN_SERIES)).order_by(Series.created_at, Series.id)):
         eps = s.scalars(select(Episode).where(Episode.series_id == x.id).order_by(Episode.number)).all()
@@ -97,7 +97,7 @@ def build(s: Session, now: datetime, *, plan_sent: dict[str, str], question: dic
     uploads = s.scalar(select(func.count()).select_from(StepRun).where(
         StepRun.step == "upload", StepRun.status == "succeeded", StepRun.finished_at >= kst_day_start_utc(now))) or 0
     out = {"at": iso(now), "uploadsToday": uploads, "series": series, "standalone": standalone,
-           "question": question, "asmr": asmr}
+           "question": question, "asmr": asmr, "news": news}
     out["text"] = render(out, now)
     return out
 
@@ -116,6 +116,9 @@ def render(ov: dict[str, Any], now: datetime) -> str:
     if ov["standalone"]:
         lines += ["", "[단독 영상]"] + [f"  {j['topic']} ({j['id']}) — {j['label']}" for j in ov["standalone"]]
     lines += ["", f"[주제 질문] {ov['question'].get('label', '')}"]
+    n = ov.get("news")
+    if n:
+        lines += ["", f"[IT 뉴스] 오늘 보낸 후보 {n['sentToday']} · 고른 {n['pickedToday']}/{n['max']} (/news, 매일 07:00)"]
     a = ov.get("asmr")
     if a:
         c = a["counts"]
@@ -124,10 +127,11 @@ def render(ov: dict[str, Any], now: datetime) -> str:
     return "\n".join(lines)
 
 
-def collect(db: Callable, clock: Callable, telegram=None, asmr=None) -> dict[str, Any]:
+def collect(db: Callable, clock: Callable, telegram=None, asmr=None, news=None) -> dict[str, Any]:
     """API 와 텔레그램 /status 가 같이 쓴다"""
     now = clock()
     question = telegram.question_state() if telegram is not None else {"label": "텔레그램 꺼짐"}
     plan_sent = telegram.plan_sent() if telegram is not None else {}
     with db() as s:
-        return build(s, now, plan_sent=plan_sent, question=question, asmr=asmr.counts() if asmr is not None else None)
+        return build(s, now, plan_sent=plan_sent, question=question, asmr=asmr.counts() if asmr is not None else None,
+                     news=news.counts() if news is not None else None)

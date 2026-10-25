@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import Any
 
 from app.core.category import load_category
@@ -54,6 +55,26 @@ def _schema(series: dict | None, body_n: int) -> dict:
         if series["nextOutline"]:
             props["nextTeaser"] = s
     return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
+
+
+COPY_RUN = 15  # 원문과 공백·문장부호 빼고 이만큼 연달아 같으면 옮긴 것으로 본다
+
+
+def _bare(text: str) -> str:
+    return re.sub(r"[\s\W_]+", "", text)
+
+
+def copied_from(sentence: str, bare_source: str) -> bool:
+    b = _bare(sentence)
+    return any(b[i:i + COPY_RUN] in bare_source for i in range(0, max(0, len(b) - COPY_RUN) + 1)) if len(b) >= COPY_RUN else False
+
+
+def _news_block(news: dict | None) -> str:
+    if not news:
+        return ""
+    facts = "\n".join(f"- {f}" for f in news["facts"])
+    return (f"IT 뉴스 해설이다. 출처: {news['sourceTitle']}. 왜 중요한가: {news['angle']}\n"
+            f"아래 사실 목록 밖의 숫자·이름·날짜·주장은 쓰지 않는다. 사실 목록 문장을 그대로 옮기지 말고 진행자가 말하듯 새로 쓴다:\n{facts}\n")
 
 
 OPTIONAL_SENTENCES = ("recap", "nextTeaser")  # 빼도 영상이 되는 문장 (1화·마지막 화에는 원래 없다)
@@ -131,7 +152,8 @@ class ScriptStep:
             "script", topic=job["topic"], audience=cat.get("audience", ""), structure=rules.get("structure", ""),
             target_chars=target, max_sentence=max_sentence, forbidden=", ".join(rules.get("forbidden", [])),
             sentences=total_n, body_sentences=body_n, min_chars=min_chars, series_block=_series_block(series),
-            review_feedback=_review_feedback(ctx))
+            news_block=_news_block(job.get("news")), review_feedback=_review_feedback(ctx))
+        source = _bare(ctx.path("news_source.txt").read_text(encoding="utf-8")) if job.get("news") and ctx.path("news_source.txt").exists() else ""
         schema = _schema(series, body_n)
 
         def check(data: Any, need_optional: bool = True) -> list[str]:
@@ -144,6 +166,8 @@ class ScriptStep:
             for i, j in repeated_sentences(spoken):  # 2026-10-18: recap 이 body 에 또 나옴, summary 가 body 를 되풀이
                 problems.append(f"{j + 1}번째 문장이 {i + 1}번째 문장을 되풀이한다. 새 내용으로 바꾼다: {spoken[j]}")
             for i, sentence in enumerate(spoken, start=1):
+                if source and copied_from(sentence, source):  # IT 뉴스: 원문·GeekNews 요약 표현 그대로 금지 (D40)
+                    problems.append(f"{i}번째 문장이 원문 표현을 그대로 옮겼다. 사실은 두고 우리 말로 바꿔 쓴다: {sentence}")
                 if count_chars(sentence) > max_sentence:
                     problems.append(f"{i}번째 문장이 {count_chars(sentence)}자다. {max_sentence}자 이내로 나눈다: {sentence}")
             # 말하는 문장 전부(지난 이야기·다음 화 예고 포함)를 센다

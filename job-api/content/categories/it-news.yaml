@@ -1,0 +1,29 @@
+# IT 뉴스 (아키텍처 D40, IT뉴스 기획서). GeekNews 에서 운영자가 고른 글을 원문 사실 목록으로 새로 쓴 해설 영상.
+# 시리즈가 아닌 단독 영상. 같은 채널(MiniBatch)에 올린다.
+key: it-news
+title: IT 뉴스 해설
+theme: letterbox
+audience: 개발자·IT 업계 종사자, IT 소식에 관심 있는 직장인·학생
+script:
+  structure: "무슨 일인지 한 문장 질문(후킹) → 무엇이 나왔거나 바뀌었는지(누가·언제·무엇) → 어떻게 동작하거나 왜 생겼는지 1~2단계 → 개발자·사용자에게 무엇이 달라지는지 → 아직 모르는 것·주의할 점 하나 → 한 문장 정리"
+  forbidden:
+    - 사실 목록에 없는 숫자·이름·날짜·주장
+    - 원문이나 GeekNews 요약 문장을 그대로 옮기기 (우리 말로 새로 쓴다)
+    - 추측을 사실처럼 말하기, 투자 권유, 특정 기업 비방
+    - 과장·감탄 표현(혁명적, 충격, 완벽하게 등)
+  max_sentence_chars: 40
+review:
+  rules: [사실 목록과 다른 숫자·이름·날짜·주장, 사실 목록에 없는 주장, 처음 듣는 사람이 이해할 수 있는가, 왜 중요한지가 있는가, 과장·낚시]
+  banned_words: ["충격", "혁명적", "완벽하게", "무조건", "100%"]
+templates:
+  - TitleReveal
+  - FlowDiagram
+  - ComparisonCards
+  - SummaryScene
+youtube:
+  category_id: "28"
+  disclosure: AI 도구로 대본과 음성을 만들었습니다. 원문 내용을 바탕으로 새로 쓴 해설입니다
+  declare_synthetic: true
+voices:
+  supertonic: M1
+  melotts: KR

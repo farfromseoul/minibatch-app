@@ -129,7 +129,7 @@ class Runner:
                 job.current_step = step_name
                 job.updated_at = now
                 ctx_job = {"id": job.id, "topic": job.topic, "topicKey": job.topic_key, "category": job.category,
-                           "seriesId": job.series_id, "episodeNumber": job.episode_number}
+                           "seriesId": job.series_id, "episodeNumber": job.episode_number, "input": job.input or {}}
                 s.commit()
         except BaseException:
             if self._lock.locked():
