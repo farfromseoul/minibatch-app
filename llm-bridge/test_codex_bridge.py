@@ -212,6 +212,34 @@ class FallbackTest(BridgeCase):
         self.assertEqual(cm.exception.status, 429)  # job-api 는 429 를 일시적 실패로 보고 다시 시도한다
 
 
+class HealthTest(BridgeCase):
+    """Codex 연속 실패를 알려 job-api 상태 점검이 경고하게 한다 (2026-10-26 실제: 10-24 부터 이틀 넘게 모든 요청이
+    10분 시간 초과 → 로컬 LLM 으로 넘어갔는데 경고가 없었다)"""
+
+    def test_consecutive_failures_are_counted_and_reset_on_success(self):
+        bad = self.bridge(fake_codex(self.dir, stderr="hang", code=1))
+        for _ in range(3):
+            bad.chat(BODY)
+        h = bad.health()
+        self.assertEqual(h["consecutiveFailures"], 3)
+        self.assertIn("hang", h["lastError"])
+        self.assertIsNotNone(h["lastFailureAt"])
+
+        good_dir = self.dir / "good"
+        good_dir.mkdir()
+        bad.cfg.codex_bin = str(fake_codex(good_dir, answer='{"title": "ok"}'))
+        bad.chat(BODY)
+
+        h = bad.health()
+        self.assertEqual(h["consecutiveFailures"], 0)
+        self.assertIsNotNone(h["lastSuccessAt"])
+
+    def test_fallback_has_its_own_timeout(self):
+        cfg = codex_bridge.Config.from_env({"CODEX_TIMEOUT_SEC": "180", "FALLBACK_TIMEOUT_SEC": "600"})
+
+        self.assertEqual((cfg.timeout_sec, cfg.fallback_timeout_sec), (180.0, 600.0))
+
+
 class HttpTest(BridgeCase):
     def test_http_endpoint_and_models(self):
         b = self.bridge(fake_codex(self.dir, answer='{"title": "http"}'))
@@ -228,6 +256,7 @@ class HttpTest(BridgeCase):
         self.assertEqual(json.loads(res["choices"][0]["message"]["content"]), {"title": "http"})
         self.assertEqual(models["data"][0]["id"], "codex")
         self.assertEqual(health["status"], "ok")
+        self.assertEqual(health["consecutiveFailures"], 0)
 
     def test_api_key_variable_is_removed_for_codex(self):
         os.environ["OPENAI_API_KEY"] = "sk-test-not-secret"

@@ -136,6 +136,9 @@ def healthz(request: Request) -> dict[str, Any]:
         checks[name] = _reachable(url)
         if not checks[name]:
             warnings.append(f"{label} 응답 없음: {url}")
+    codex_warning = _codex_failures(st)
+    if codex_warning:
+        warnings.append(codex_warning)
     checks["youtube_token"], token_warning = _youtube_token(st)
     if token_warning:
         warnings.append(token_warning)
@@ -157,6 +160,30 @@ def _worker_urls(st) -> list[tuple[str, str, str]]:
         urls.append(("tts", "tts-worker", registry.tts_settings()["url"].rstrip("/") + "/healthz"))
     urls.append(("render", "render-worker", st.settings.render_worker_url.rstrip("/") + "/healthz"))
     return urls
+
+
+CODEX_WARN_AFTER = 3
+
+
+def _codex_failures(st) -> Optional[str]:
+    """Codex 중계기가 알려 주는 연속 실패 (2026-10-26: 이틀 넘게 모든 요청이 10분 시간 초과 → 로컬 LLM 이었는데 경고가 없었다).
+    대본 단계 제공자의 주소 뿌리에서 /healthz 를 읽는다. LM Studio 처럼 이 값을 주지 않는 서버면 넘어간다"""
+    registry = st.providers
+    cfg = getattr(registry, "config", None) or {} if registry is not None else {}
+    llm = cfg.get("llm") or {}
+    base = ((llm.get("providers") or {}).get((llm.get("steps") or {}).get("script")) or {}).get("base_url")
+    if not base:
+        return None
+    root = base.rstrip("/").removesuffix("/v1")
+    try:
+        h = httpx.get(root + "/healthz", timeout=2.0).json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    n = h.get("consecutiveFailures") if isinstance(h, dict) else None
+    if not isinstance(n, int) or n < CODEX_WARN_AFTER:
+        return None
+    return (f"Codex {n}번 연속 실패 → 로컬 LLM 으로 대신 처리 중 (마지막 성공 {h.get('lastSuccessAt') or '?'}, "
+            f"마지막 오류: {str(h.get('lastError') or '')[:120]}). 맥미니에서 codex --version 이 응답하는지 본다 (운영 명령 5)")
 
 
 def _reachable(url: str) -> bool:

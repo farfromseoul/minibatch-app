@@ -182,3 +182,43 @@ class ScriptRuleStuckTest(StuckCase):
 
         (q,) = [m for m in self.tg.sent("sendMessage") if "reply_markup" in m and "ro:" in str(m["reply_markup"])]
         self.assertIn("49자", q["text"])
+
+
+class TransientStuckTest(StuckCase):
+    """시간 초과처럼 일시적 오류로 세 번 실패해 멈춘 작업도 [다시 시도] 를 묻는다
+    (2026-10-26 실제: 6번째 시리즈 6화가 장면 단계 LLM 900초 초과로 FAILED, 질문 없이 멈춤)"""
+    review_fails = False
+
+    def make_steps(self):
+        steps = super().make_steps()
+        steps["review"] = FakeStep("review", ["script.json"], ["review.json"],
+                                   fail=StepFailure("transient", "LLM 서버 시간 초과(900.0초)"))
+        return steps
+
+    def failed_job(self):
+        self.post("/series", SERIES)
+        job_id = self.post("/jobs", {"seriesId": "ai-office"}).json()["id"]
+        self.run_until(job_id, "review")
+        self.run_step(job_id, "review")
+        self.run_step(job_id, "review")
+        self.assertEqual(self.get(f"/jobs/{job_id}").json()["status"], "FAILED")
+        return job_id
+
+    def test_transient_failure_asks_retry_and_skip(self):
+        job_id = self.failed_job()
+
+        self.app.state.telegram_poller.remind_due()
+
+        (q,) = [m for m in self.tg.sent("sendMessage") if "rt:" in str(m.get("reply_markup"))]
+        self.assertIn("시간 초과", q["text"])
+        self.assertEqual([b["callback_data"] for b in q["reply_markup"]["inline_keyboard"][0]], [f"rt:{job_id}", f"rs:{job_id}"])
+
+    def test_retry_resets_from_failed_step(self):
+        job_id = self.failed_job()
+        self.app.state.telegram_poller.remind_due()
+        self.tg.press(f"rt:{job_id}")
+
+        self.poll()
+
+        job = self.get(f"/jobs/{job_id}").json()
+        self.assertEqual((job["status"], job["events"][-1]["reason"]), ("RUNNING", "reset from=review"))

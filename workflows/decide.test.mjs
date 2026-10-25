@@ -42,11 +42,16 @@ test("결정적 실패는 retryFrom 으로 되돌리기, 두 번까지", () => {
   assert.match(d.message, /되돌리기 2번 뒤에도/);
 });
 
-test("되돌릴 곳이 없는 실패·일시적 실패 한도 초과는 알림", () => {
-  const j = job("FAILED", [run("topic", "succeeded"), run("script", "failed", { kind: "transient", error: "3번째" })]);
+test("되돌릴 곳이 없는 결정적 실패는 알림", () => {
+  const j = job("FAILED", [run("topic", "succeeded"), run("script", "failed", { kind: "deterministic", error: "설정 없음" })]);
   const d = decide(j, P, opt);
   assert.equal(d.action, "fail");
   assert.match(d.message, /script/);
+});
+
+test("일시적 실패 한도 초과는 조용히 끝 (2026-10-26 부터 job-api 가 [다시 시도] 를 묻는다. 그 전에는 알림)", () => {
+  const j = job("FAILED", [run("topic", "succeeded"), run("script", "failed", { kind: "transient", error: "3번째" })]);
+  assert.equal(decide(j, P, opt).action, "stop");
 });
 
 test("갱신 토큰 만료로 upload 실패하면 15번 안내가 메시지에 남는다", () => {
@@ -125,4 +130,10 @@ test("대본 규칙으로 되돌리기를 다 써도 조용히 끝 (2026-10-25: 
   const f = run("script", "failed", { kind: "deterministic", retryFrom: "script", error: "대본 규칙을 지키지 못했다: 2번째 문장이 49자다" });
   const j = job("FAILED", [run("topic", "succeeded"), f], [{ reason: "reset from=script" }, { reason: "reset from=script" }]);
   assert.equal(decide(j, P, opt).action, "stop");
+});
+
+test("일시적 실패로 멈춘 작업은 조용히 끝 (job-api 가 텔레그램으로 [다시 시도] 를 묻는다, 2026-10-26)", () => {
+  const f = run("scenes", "failed", { kind: "transient", error: "LLM 서버 시간 초과(900.0초)" });
+  const j = job("FAILED", [run("topic", "succeeded"), run("script", "succeeded"), run("review", "succeeded"), f]);
+  assert.equal(decide(j, [...P.slice(0, 3), "scenes", "upload"], opt).action, "stop");
 });

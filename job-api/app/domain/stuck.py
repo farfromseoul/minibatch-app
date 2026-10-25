@@ -61,6 +61,17 @@ def find_stuck(s: Session) -> list[dict[str, Any]]:
     return out
 
 
+def find_transient(s: Session) -> list[dict[str, Any]]:
+    """일시적 오류(LLM 시간 초과 등)를 세 번 겪어 FAILED 인 작업 (2026-10-26 실제: 6화 장면 단계 900초 초과로 멈춤)"""
+    out = []
+    for job in s.scalars(select(Job).where(Job.status == "FAILED").order_by(Job.created_at)):
+        run = s.scalar(select(StepRun).where(StepRun.job_id == job.id, StepRun.superseded.is_(False))
+                       .order_by(StepRun.started_at.desc(), StepRun.id.desc()).limit(1))
+        if run is not None and run.status == "failed" and run.kind == "transient":
+            out.append({"job": job, "step": run.step, "error": run.error or ""})
+    return out
+
+
 def _stuck_job(s: Session, job_id: str) -> Job:
     job = s.get(Job, job_id)
     if job is None:

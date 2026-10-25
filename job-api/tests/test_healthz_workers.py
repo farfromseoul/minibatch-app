@@ -102,3 +102,58 @@ class WorkersDownTest(AppTestCase):
         self.assertEqual((body["checks"]["llm"], body["checks"]["tts"], body["checks"]["render"]), (False, False, False))
         for word in ("LLM", "tts-worker", "render-worker"):
             self.assertTrue(any(word in w for w in body["warnings"]), word)
+
+
+class BridgeHealth(BaseHTTPRequestHandler):
+    failures = 0
+
+    def do_GET(self):  # noqa: N802
+        if self.path.startswith("/healthz"):
+            obj = {"status": "ok", "consecutiveFailures": BridgeHealth.failures, "lastError": "timeout: codex 600.0초 초과",
+                   "lastSuccessAt": "2026-10-22T06:43:25", "lastFailureAt": "2026-10-26T00:19:31"}
+        else:
+            obj = {"data": []}
+        body = json.dumps(obj).encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *a):
+        pass
+
+
+class CodexFailuresTest(AppTestCase):
+    """Codex 중계기가 연속 실패를 알리면 경고 (2026-10-26)"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = HTTPServer(("127.0.0.1", 0), BridgeHealth)
+        cls.url = f"http://127.0.0.1:{cls.server.server_address[1]}"
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+
+    def extra_settings(self):
+        return {"render_worker_url": self.url}
+
+    def make_providers(self):
+        return Registry(self.url, self.url + "/v1")
+
+    def warnings(self):
+        return self.client.get("/healthz").json()["warnings"]
+
+    def test_three_failures_warn(self):
+        BridgeHealth.failures = 3
+
+        (w,) = [x for x in self.warnings() if "Codex" in x]
+
+        self.assertIn("3번 연속 실패", w)
+        self.assertIn("로컬 LLM", w)
+
+    def test_fewer_failures_do_not_warn(self):
+        BridgeHealth.failures = 2
+
+        self.assertEqual([x for x in self.warnings() if "Codex" in x], [])

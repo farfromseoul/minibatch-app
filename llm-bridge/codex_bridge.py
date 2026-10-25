@@ -37,17 +37,24 @@ class Config:
     codex_model: str = ""          # 비우면 codex 설정의 기본 모델
     fallback_url: str = ""         # 예: http://127.0.0.1:1234/v1 (LM Studio). 비우면 대체 없음
     fallback_model: str = ""
-    timeout_sec: float = 600
+    timeout_sec: float = 600       # codex 한 번 (정상 10~35초. 2026-10-26: 600 은 멈췄을 때 뒤 요청을 너무 오래 막았다 → 템플릿 180)
+    fallback_timeout_sec: float = 600  # 로컬 LLM 은 느리므로 codex 와 따로
     # 요청 스키마 이름(script, scenes, visual_queries …) → Codex 추론 강도(low|medium|high).
     # 규칙대로 고르는 일은 low 로 사용량을 줄인다 (2026-10-19). 없는 이름은 Codex 기본값
     effort: dict = field(default_factory=dict)
 
     @classmethod
-    def from_env(cls) -> "Config":
-        e = os.environ
+    def from_env(cls, env=None) -> "Config":
+        e = os.environ if env is None else env
         return cls(codex_bin=e.get("CODEX_BIN", "codex"), codex_model=e.get("CODEX_MODEL", ""),
                    fallback_url=e.get("FALLBACK_URL", ""), fallback_model=e.get("FALLBACK_MODEL", ""),
-                   timeout_sec=float(e.get("CODEX_TIMEOUT_SEC", "600")), effort=_parse_effort(e.get("CODEX_EFFORT", "")))
+                   timeout_sec=float(e.get("CODEX_TIMEOUT_SEC", "600")),
+                   fallback_timeout_sec=float(e.get("FALLBACK_TIMEOUT_SEC", "600")),
+                   effort=_parse_effort(e.get("CODEX_EFFORT", "")))
+
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _parse_effort(text: str) -> dict:
@@ -140,19 +147,33 @@ def _classify(stderr: str) -> str:
 class Bridge:
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()  # 같은 ChatGPT 계정으로 codex 를 동시에 여러 번 돌리지 않는다
         self.last_fallback_reason: Optional[str] = None
+        # 연속 실패 (2026-10-26: codex 가 이틀 넘게 멈췄는데 아무 경고가 없었다 → job-api /healthz 가 읽어 경고)
+        self.consecutive_failures = 0
+        self.last_success_at: Optional[str] = None
+        self.last_failure_at: Optional[str] = None
+        self.last_error: Optional[str] = None
+
+    def health(self) -> dict:
+        return {"status": "ok", "lastFallbackReason": self.last_fallback_reason,
+                "consecutiveFailures": self.consecutive_failures, "lastSuccessAt": self.last_success_at,
+                "lastFailureAt": self.last_failure_at, "lastError": self.last_error}
 
     def chat(self, body: dict) -> dict:
         with self._lock:
             try:
-                return self._codex(body)
+                res = self._codex(body)
             except BridgeError as e:
+                self.consecutive_failures += 1
+                self.last_failure_at, self.last_error = _now(), e.message[:300]
                 if not self.cfg.fallback_url:
                     raise
-                log.warning("codex 실패(%s) → 로컬 LLM 으로", e.message[:200])
+                log.warning("codex 실패(%s) → 로컬 LLM 으로 (연속 %d번)", e.message[:200], self.consecutive_failures)
                 self.last_fallback_reason = e.message.split(":", 1)[0]
                 return self._fallback(body)
+            self.consecutive_failures, self.last_success_at = 0, _now()
+            return res
 
     def _codex(self, body: dict) -> dict:
         rf = body.get("response_format") or {}
@@ -198,7 +219,7 @@ class Bridge:
         req = urllib.request.Request(self.cfg.fallback_url.rstrip("/") + "/chat/completions",
                                      json.dumps(fb).encode(), {"Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(req, timeout=self.cfg.timeout_sec) as r:
+            with urllib.request.urlopen(req, timeout=self.cfg.fallback_timeout_sec) as r:
                 res = json.load(r)
         except (urllib.error.URLError, OSError, ValueError) as e:
             raise BridgeError(429, f"fallback_failed: {type(e).__name__}")
@@ -220,7 +241,7 @@ def make_server(bridge: Bridge, host: str, port: int) -> ThreadingHTTPServer:
             if self.path.rstrip("/") == "/v1/models":
                 return self._send(200, {"object": "list", "data": [{"id": "codex", "object": "model"}]})
             if self.path.rstrip("/") == "/healthz":
-                return self._send(200, {"status": "ok", "lastFallbackReason": bridge.last_fallback_reason})
+                return self._send(200, bridge.health())
             self._send(404, {"error": {"message": "없는 주소"}})
 
         def do_POST(self):

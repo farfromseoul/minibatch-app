@@ -32,6 +32,10 @@ export function decide(job, pipeline, opt) {
       }
       return { action: "fail", message: `${what}, 되돌리기 ${resets}번 뒤에도: ${f.error}` };
     }
+    if (f.kind === "transient") {
+      // job-api 가 텔레그램으로 [다시 시도] 를 묻는다. 실패 알림을 겹쳐 보내지 않는다 (2026-10-26)
+      return { action: "stop", message: `${what}: 텔레그램에서 [다시 시도]` };
+    }
     return { action: "fail", message: `${what}: ${f.error}` };
   }
 

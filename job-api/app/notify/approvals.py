@@ -48,6 +48,7 @@ HELP = """🤖 MiniBatch 명령
 · 시리즈 계획: [계획 승인] [다른 주제로]
 · 다음 시리즈 주제 질문: [자동으로 정하기] [오늘은 건너뛰기] — 답장은 '주제, 화수'
 · 대본이 3번 통과 못 함: [개요 고쳐 다시] [건너뛰기]
+· 일시적 오류(시간 초과 등)로 멈춤: [다시 시도] [건너뛰기]
 · IT 뉴스 후보: [이걸로 만들기] — 하루 기본 1편, 최대 3편
 · ASMR: [업로드 승인] [공개 승인] [버리기]
 
@@ -56,7 +57,8 @@ HELP = """🤖 MiniBatch 명령
 · IT 뉴스 후보: 매일 07:00 (n8n 7번)
 · 다음 시리즈 주제 질문: 남은 화가 적으면 하루 한 번 (n8n 3번)
 · ASMR inbox 확인: 매시 정각 (n8n 6번)
-· 승인 대기 다시 알림: 검토 6시간, 계획·멈춘 화 하루 한 번"""
+· 승인 대기 다시 알림: 검토 6시간, 계획·멈춘 작업 하루 한 번
+· 상태 감시: 5분마다, Codex 3번 연속 실패 등 새 경고만 (n8n 4번)"""
 DEFAULT_COUNT, MIN_COUNT, MAX_COUNT = 10, 3, 20  # 시리즈 화 수 (D37)
 COUNT = re.compile(r"^(\d+)\s*(화|편)?$")
 EXAMPLE = "예) 쿠버네티스 기초, 8"
@@ -182,6 +184,8 @@ class TelegramApprovals:
             return self._fix_outline(target)
         if kind == "rs":
             return self._skip_episode(target)
+        if kind == "rt":
+            return self._retry_failed(target)
         if kind in ("ua", "up", "ux"):  # ASMR 채널 (D38): 업로드 승인, 공개 승인, 버리기
             if self.asmr is None:
                 return "ASMR 기능이 꺼져 있습니다"
@@ -440,6 +444,7 @@ class TelegramApprovals:
             self._reminded[job_id] = now
         self._remind_plans(now)
         self._ask_stuck(now)
+        self._ask_transient(now)
         if self.asmr is not None:
             self.asmr.remind_due()
 
@@ -467,6 +472,44 @@ class TelegramApprovals:
                 continue
             sent = now.isoformat()
             self._edit_state(lambda st, j=job_id: st.setdefault("stuckAsked", {}).__setitem__(j, sent))
+
+    def _ask_transient(self, now) -> None:
+        """일시적 오류로 멈춘 작업에 [다시 시도] (시리즈 화면 [건너뛰기] 도) 를 묻는다 (작업마다 하루 한 번)"""
+        with self.db() as s:
+            items = []
+            for x in stuck.find_transient(s):
+                job = x["job"]
+                if job.series_id:
+                    head = f"{series_order.label(s, s.get(Series, job.series_id))} {job.episode_number}화 {job.topic}"
+                else:
+                    head = job.topic
+                items.append((job.id, head, x["step"], x["error"], bool(job.series_id)))
+        asked = self._load().get("stuckAsked") or {}
+        for job_id, head, step, error, is_series in items:
+            if job_id in asked and (now - datetime.fromisoformat(asked[job_id])).total_seconds() < PLAN_REMIND_SEC:
+                continue
+            text = (f"⚠️ 일시적 오류로 멈춤: {head}\n{step} 단계, 3번 실패: {error[:400]}\n"
+                    "[다시 시도]: 그 단계부터 다음 정각에 이어서 만듭니다 (Codex·LLM 서버가 살아났는지 /status 로 먼저 확인)")
+            buttons = [("다시 시도", f"rt:{job_id}")] + ([("건너뛰기", f"rs:{job_id}")] if is_series else [])
+            try:
+                self.bot.send(text, buttons)
+            except TelegramError as e:
+                log.warning("텔레그램 보내기 실패: %s", e)
+                continue
+            sent = now.isoformat()
+            self._edit_state(lambda st, j=job_id: st.setdefault("stuckAsked", {}).__setitem__(j, sent))
+
+    def _retry_failed(self, job_id: str) -> str:
+        if self.runner is None:
+            raise ApiError(503, "runner_unavailable", "실행기가 없다")
+        with self.db() as s:
+            x = next((i for i in stuck.find_transient(s) if i["job"].id == job_id), None)
+            if x is None:
+                raise ApiError(409, "not_transient_failed", "일시적 오류로 멈춘 작업이 아닙니다(이미 처리됨)")
+            step, head = x["step"], x["job"].topic
+        self.runner.reset(job_id, step)
+        self._edit_state(lambda st: (st.get("stuckAsked") or {}).pop(job_id, None))
+        return f"🔁 다시 시도: {head} ({step} 단계부터, 다음 생산 시각에)"
 
     def _fix_outline(self, job_id: str) -> str:
         if self.runner is None or self.providers is None:
