@@ -56,6 +56,24 @@ def _schema(series: dict | None, body_n: int) -> dict:
     return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
 
 
+OPTIONAL_SENTENCES = ("recap", "nextTeaser")  # 빼도 영상이 되는 문장 (1화·마지막 화에는 원래 없다)
+
+
+def _drop_bad_optional(data: dict, max_sentence: int) -> tuple[dict, list[str]]:
+    """지난 화 짚기·다음 화 예고 중 너무 길거나 다른 문장을 되풀이하는 것을 뺀다"""
+    data, dropped = dict(data), []
+    for key in OPTIONAL_SENTENCES:
+        sentence = data.get(key)
+        if not sentence:
+            continue
+        spoken = script_sentences(data)
+        idx = spoken.index(sentence)
+        repeated = any(idx in pair for pair in repeated_sentences(spoken))
+        if count_chars(sentence) > max_sentence or repeated:
+            dropped.append(data.pop(key))
+    return data, dropped
+
+
 def _review_feedback(ctx: StepContext) -> str:
     """다시 쓰는 대본이면 직전 검토에서 떨어진 이유 (마지막 개요 고침 뒤, 최근 2번).
     2026-10-21 실제: 되돌려서 같은 개요로 처음부터 다시 쓰니 '키 합의를 풀어 써라' 를 세 번 연속 받았다"""
@@ -116,9 +134,10 @@ class ScriptStep:
             review_feedback=_review_feedback(ctx))
         schema = _schema(series, body_n)
 
-        def check(data: Any) -> list[str]:
+        def check(data: Any, need_optional: bool = True) -> list[str]:
             problems = []
-            missing = [k for k in schema["required"] if not data.get(k)] if isinstance(data, dict) else schema["required"]
+            required = [k for k in schema["required"] if need_optional or k not in OPTIONAL_SENTENCES]
+            missing = [k for k in required if not data.get(k)] if isinstance(data, dict) else required
             if missing:
                 return [f"{k} 가 없다" + (" (recap: 앞 화 핵심을 짚는 한 문장)" if k == "recap" else "") for k in missing]
             spoken = script_sentences(data)
@@ -155,12 +174,21 @@ class ScriptStep:
             return data
 
         out = ask(ctx, messages, schema, "script", check, adjust=trim)
+        data, dropped = out.data, []
         hard = [p for p in out.problems if not p.startswith(LENGTH_TAG)]
+        if hard and isinstance(data, dict) and data.get("hook"):
+            # 다시 물어도 지난 화 짚기·다음 화 예고만 규칙을 어기면 그 문장을 빼고 쓴다 (2026-10-24 실제: 4화 recap 이
+            # 되풀이·49자로 세 번 떨어져 시리즈가 멈췄다). 후킹·본문·요약 문제는 그대로 실패
+            data, dropped = _drop_bad_optional(data, max_sentence)
+            if dropped:
+                hard = [p for p in check(data, need_optional=False) if not p.startswith(LENGTH_TAG)]
+                ctx.note_degraded("규칙을 어긴 문장을 뺐다: " + " / ".join(dropped))
         if hard:
             raise StepFailure("deterministic", "대본 규칙을 지키지 못했다: " + "; ".join(hard)[:800], retry_from="script")
         if out.problems:  # 글자 수만 어긋남
             ctx.note_degraded("; ".join(out.problems))
-        data = dict(out.data)
+        data = dict(data)
         chars = sum(count_chars(t) for t in script_sentences(data))
-        data["meta"] = meta_of(out, version, targetChars=target, charCount=chars, trimmedSentences=ctx.meta.get("trimmed", []))
+        data["meta"] = meta_of(out, version, targetChars=target, charCount=chars, trimmedSentences=ctx.meta.get("trimmed", []),
+                               droppedSentences=dropped)
         ctx.write_json("script.json", data)

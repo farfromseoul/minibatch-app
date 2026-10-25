@@ -405,7 +405,7 @@ class TelegramApprovals:
         for job_id, head, last in items:
             if job_id in asked and (now - datetime.fromisoformat(asked[job_id])).total_seconds() < PLAN_REMIND_SEC:
                 continue
-            text = (f"✍️ 대본 검토 {stuck.STUCK_AFTER}번 연속 미달: {head}\n마지막 검토 의견: {last[:600]}\n"
+            text = (f"✍️ 대본이 {stuck.STUCK_AFTER}번 연속 통과하지 못함: {head}\n마지막 이유: {last[:600]}\n"
                     "[개요 고쳐 다시]: 검토 의견으로 개요를 고쳐 대본부터 다시 만들고 승인을 요청합니다\n"
                     "[건너뛰기]: 이 화를 빼고 다음 화로 넘어갑니다")
             try:

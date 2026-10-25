@@ -24,7 +24,9 @@ from .status import set_status
 
 # 대본 검토의 결정적 실패: 점수 미달과 치명 오류 둘 다 대본을 다시 써야 하는 실패라 같이 센다
 # (2026-10-21 실제: 점수 미달만 세다가 '미달 2 + 치명 1' 인 6화에 질문을 보내지 않았다. decide.mjs 도 같은 기준)
-REVIEW_FAILS = ("검토 점수 미달", "검토에서 치명 오류")
+# 2026-10-25: 대본 단계 규칙(문장 길이·되풀이)으로 세 번 떨어진 4화도 알림만 오고 멈춰, 대본 단계 실패도 같이 센다
+REVIEW_FAILS = ("검토 점수 미달", "검토에서 치명 오류", "대본 규칙을 지키지 못했다")
+SCRIPT_STEPS = ("script", "review")
 STUCK_AFTER = 3  # 생산 워크플로가 두 번 되돌려 세 번 써 본 뒤 (decide.mjs maxResets 2)
 FIXED = "개요 고침"  # 이 이유의 작업 이력 뒤로 실패를 다시 센다 (decide.mjs 도 되돌리기 횟수를 여기서부터 센다)
 
@@ -39,8 +41,8 @@ def _since_fix(s: Session, job: Job) -> Optional[datetime]:
 
 
 def low_score_failures(s: Session, job: Job) -> list[str]:
-    """마지막 개요 고침 뒤 대본 검토에서 떨어진 의견 (점수 미달·치명 오류, 되돌려서 지워진 시도도 센다)"""
-    q = select(StepRun).where(StepRun.job_id == job.id, StepRun.step == "review", StepRun.status == "failed",
+    """마지막 개요 고침 뒤 대본이 떨어진 이유 (검토 점수 미달·치명 오류, 대본 규칙. 되돌려서 지워진 시도도 센다)"""
+    q = select(StepRun).where(StepRun.job_id == job.id, StepRun.step.in_(SCRIPT_STEPS), StepRun.status == "failed",
                               StepRun.kind == "deterministic", or_(*[StepRun.error.like(f"{p}%") for p in REVIEW_FAILS]))
     since = _since_fix(s, job)
     if since is not None:
@@ -51,7 +53,7 @@ def low_score_failures(s: Session, job: Job) -> list[str]:
 def find_stuck(s: Session) -> list[dict[str, Any]]:
     out = []
     for job in s.scalars(select(Job).where(Job.status == "FAILED", Job.series_id.is_not(None)).order_by(Job.created_at)):
-        if job.current_step != "review":
+        if job.current_step not in SCRIPT_STEPS:
             continue
         errors = low_score_failures(s, job)
         if len(errors) >= STUCK_AFTER:

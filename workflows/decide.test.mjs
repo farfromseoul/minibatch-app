@@ -120,3 +120,9 @@ test("검토 대기 사이에 승인(공개)된 작업은 다음 작업으로", 
     assert.equal(decide(job(status), P, opt).action, "next", status);
   }
 });
+
+test("대본 규칙으로 되돌리기를 다 써도 조용히 끝 (2026-10-25: 4화가 알림만 오고 멈춤)", () => {
+  const f = run("script", "failed", { kind: "deterministic", retryFrom: "script", error: "대본 규칙을 지키지 못했다: 2번째 문장이 49자다" });
+  const j = job("FAILED", [run("topic", "succeeded"), f], [{ reason: "reset from=script" }, { reason: "reset from=script" }]);
+  assert.equal(decide(j, P, opt).action, "stop");
+});

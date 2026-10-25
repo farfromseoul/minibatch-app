@@ -174,6 +174,33 @@ class SeriesScriptTest(LlmStepCase):
         self.assertIn("시리즈 전체", prompt)  # summary 로 시리즈를 마무리한다 (D33, 2026-10-18 사용자 요청)
 
 
+class DropBadRecapTest(SeriesScriptTest):
+    """지난 화 짚기(recap)만 계속 규칙을 어기면 그 문장을 빼고 통과 (2026-10-24 실제: 6번째 시리즈 4화가
+    recap 이 되풀이·49자로 대본 단계에서 세 번 떨어져 시리즈가 멈췄다)"""
+
+    def test_long_recap_after_all_attempts_is_dropped(self):
+        job2 = self.episode2_job()
+        long_recap = "지난 화에서 배운 어텐션이 문장 속 단어들 사이의 관계를 파악하는 핵심 기술이었다면 이번에는 그 단어 하나하나를 숫자로 어떻게 표현할지 알아볼게요."
+        self.llm.responses = [script_of(38, 8, recap=long_recap, episodeSummary="요약")] * 3
+
+        self.run_until(job2, "script")
+
+        s = self.read(job2, "script.json")
+        self.assertNotIn("recap", s)
+        self.assertEqual(s["meta"]["droppedSentences"], [long_recap])
+
+    def test_long_body_sentence_still_fails(self):
+        job2 = self.episode2_job()
+        bad = script_of(38, 8, recap="지난 화에서 AI 뜻을 봤죠.", episodeSummary="요약")
+        bad["body"][1] = "가" * 60 + "."
+        self.llm.responses = [bad] * 3
+
+        self.run_until(job2, "script")
+
+        st = self.status(job2, "script")
+        self.assertEqual((st["status"], st["kind"]), ("failed", "deterministic"))
+
+
 class ReviewStepTest(LlmStepCase):
     def test_pass_with_rule_warnings(self):
         script = script_of(38, 8)

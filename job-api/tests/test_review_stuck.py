@@ -157,3 +157,28 @@ class SkipTest(StuckCase):
         self.poll()
 
         self.assertIn("1화 배우기 — ⏭ 건너뜀", self.get("/overview").json()["text"])
+
+
+class ScriptRuleStuckTest(StuckCase):
+    """대본 단계 규칙으로 세 번 떨어져도 같은 질문을 한다 (2026-10-24 실제: 6번째 시리즈 4화가 알림만 오고 멈춤)"""
+    review_fails = False
+
+    def make_steps(self):
+        steps = super().make_steps()
+        steps["script"] = FakeStep("script", ["job.json"], ["script.json"],
+                                   fail=StepFailure("deterministic", "대본 규칙을 지키지 못했다: 2번째 문장이 49자다", retry_from="script"))
+        return steps
+
+    def test_three_script_rule_failures_ask(self):
+        self.post("/series", SERIES)
+        job_id = self.post("/jobs", {"seriesId": "ai-office"}).json()["id"]
+        self.run_step(job_id, "topic")
+        self.run_step(job_id, "script")
+        for _ in range(2):
+            self.post(f"/jobs/{job_id}/reset?from=script")
+            self.run_step(job_id, "script")
+
+        self.app.state.telegram_poller.remind_due()
+
+        (q,) = [m for m in self.tg.sent("sendMessage") if "reply_markup" in m and "ro:" in str(m["reply_markup"])]
+        self.assertIn("49자", q["text"])
