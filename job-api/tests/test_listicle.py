@@ -231,6 +231,35 @@ class PacingTest(unittest.TestCase):
         self.assertEqual(c1["toFrame"], c2["fromFrame"])  # 짧은 쉼에는 앞 자막을 남긴다
 
 
+class FitPacingTest(unittest.TestCase):
+    """실제 말이 추정보다 빨라도 쉼을 늘려 목표 길이에 맞춘다 (2026-10-31 실제: 초당 8.0글자로 읽혀 47.7초 → 대본 세 번 다시 써도 실패)"""
+
+    def doc(self, n_scenes=10, seconds=2.0):
+        scenes = {"scenes": [{"id": f"s{i:02d}", "lines": ["가나다라마바사아자"], "padAfterSec": 0.4, "animationPreset": "pop",
+                              "visual": {"type": "template", "component": "LIcon", "props": {"icon": "bolt", "title": "x"}}}
+                             for i in range(1, n_scenes + 1)]}
+        tts = {"items": [{"id": f"s{i:02d}-01", "scene": f"s{i:02d}", "text": "가나다라마바사아자", "path": f"tts/{i}.wav",
+                          "seconds": seconds} for i in range(1, n_scenes + 1)]}
+        return scenes, tts
+
+    def test_short_speech_gets_longer_pauses_into_range(self):
+        scenes, tts = self.doc(seconds=3.0)  # 말 30초 + 쉼 약 6초 = 36초
+        t, scale = ls.fit_pacing(scenes, tts, target=40, tol=3, fps=30, theme="nova", phrases=None, spans=None)
+        self.assertTrue(37 <= t["durationInFrames"] / 30 <= 43, t["durationInFrames"] / 30)
+        self.assertGreater(scale, 1)
+
+    def test_in_range_keeps_natural_pauses(self):
+        scenes, tts = self.doc(seconds=3.4)
+        t, scale = ls.fit_pacing(scenes, tts, target=40, tol=3, fps=30, theme="nova", phrases=None, spans=None)
+        self.assertEqual(scale, 1.0)
+
+    def test_scale_is_capped(self):
+        scenes, tts = self.doc(seconds=1.0)  # 말 10초: 쉼을 두 배로 늘려도 모자란다 → 그대로 실패하게 둔다
+        t, scale = ls.fit_pacing(scenes, tts, target=40, tol=3, fps=30, theme="nova", phrases=None, spans=None)
+        self.assertEqual(scale, ls.MAX_PAUSE_SCALE)
+        self.assertLess(t["durationInFrames"] / 30, 37)
+
+
 class ListicleCase(TelegramCase, MediaCase):
     pipeline = ["topic", "script", "review", "scenes", "tts", "timeline"]
 
@@ -293,7 +322,7 @@ class TopCommandTest(ListicleCase):
 class ListicleProductionTest(ListicleCase):
     def test_chain_to_timeline_has_tracker_sections_and_word_captions(self):
         job_id = self.post("/listicle", {"topic": "클로드 스킬", "count": 3}).json()["id"]
-        target = ls.target_chars(58, 6.3, 3, len("저장해두고하나씩써보세요."))
+        target = ls.target_chars(58, 7.5, 3, len("저장해두고하나씩써보세요."))
         per = max(8, round(target / 14))
         self.llm.responses = [reply(per=per), {"issues": [], "scores": GOOD_SCORES, "verdict": "pass"}, VISUALS, VISUALS, VISUALS]
 

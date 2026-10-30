@@ -342,6 +342,33 @@ def build_scenes(lst: dict[str, Any], picks: list[list[dict[str, Any]]], outro: 
     return [sc for sc in out if sc["lines"]]  # 문장이 없는 장면(첫마디 1문장 등)은 뺀다
 
 
+# ---------- 길이 맞추기
+
+MIN_PAUSE_SCALE, MAX_PAUSE_SCALE = 0.7, 2.0
+FIT_MARGIN_SEC = 2.0  # 범위 끝에서 이만큼 안쪽을 노린다
+
+
+def fit_pacing(scenes: dict[str, Any], tts: dict[str, Any], *, target: float, tol: float, fps: int, theme: str,
+               phrases, spans, width: int = 1080, height: int = 1920) -> tuple[dict[str, Any], float]:
+    """말 길이는 그대로 두고 쉼(앞 여백·문장 사이·장면 뒤)만 0.7~2배로 늘리고 줄여 목표 ± 허용 안에 넣는다.
+    2026-10-31 실제: 짧은 한국어 문장은 초당 8.0글자로 읽혀(추정 6.3) 47.7초 → 대본을 세 번 다시 써도 같은 실패.
+    범위 안이면 쉼을 그대로(1배) 둔다. 두 배로 늘려도 모자라면 그대로 돌려줘 timeline 단계가 실패시킨다"""
+    from app.pipeline.timeline_calc import compute_timeline
+
+    def run(scale: float) -> dict[str, Any]:
+        return compute_timeline(scenes, tts, fps=fps, width=width, height=height, theme=theme, phrases=phrases, spans=spans,
+                                pacing={**PACING, "scale": scale})
+    t = run(1.0)
+    d = t["durationInFrames"] / fps
+    if target - tol <= d <= target + tol:
+        return t, 1.0
+    per = run(2.0)["durationInFrames"] / fps - d  # 쉼 배율 1 늘릴 때 늘어나는 초
+    goal = target - tol + FIT_MARGIN_SEC if d < target - tol else target + tol - FIT_MARGIN_SEC
+    scale = 1.0 + (goal - d) / per if per > 0 else 1.0
+    scale = round(min(MAX_PAUSE_SCALE, max(MIN_PAUSE_SCALE, scale)), 3)
+    return run(scale), scale
+
+
 # ---------- 자막
 
 def phrases_for(ctx: StepContext, scenes_doc: dict[str, Any], tts: dict[str, Any]

@@ -28,8 +28,9 @@ def compute_timeline(scenes_doc: dict[str, Any], tts: dict[str, Any], *, fps: in
     """spans: 문장 WAV 안의 말 구간 (시작 초, 끝 초). 주면 앞뒤 무음을 잘라 문장 사이를 pacing 의 쉼으로 둔다
     (목록형 D42, 2026-10-31: Supertonic 이 문장마다 앞 0.6초·뒤 0.65초 무음을 붙여 문장 사이가 1.3초 넘게 비었다).
     음성 파일은 그대로 두고, 앞 무음만큼 일찍 틀어 말이 정한 시각에 시작하게 한다(무음끼리 겹쳐도 소리는 같다)"""
-    lead = (pacing or {}).get("lead", LEAD_SEC)
-    gap = (pacing or {}).get("gap", GAP_SEC)
+    scale = (pacing or {}).get("scale", 1.0)  # 쉼 배율 (목록형: 목표 길이에 맞추려고 쉼만 늘리고 줄인다, 2026-10-31)
+    lead = (pacing or {}).get("lead", LEAD_SEC) * scale
+    gap = (pacing or {}).get("gap", GAP_SEC) * scale
     tail = (pacing or {}).get("tail", 0.0)
     hold = (pacing or {}).get("hold", 0.0)
     by_scene: dict[str, list[dict[str, Any]]] = {}
@@ -60,7 +61,7 @@ def compute_timeline(scenes_doc: dict[str, Any], tts: dict[str, Any], *, fps: in
             else:
                 captions.append({"text": item["text"], "fromFrame": frame(cur, fps), "toFrame": frame(cur + length, fps)})
             cur += length
-        t = cur + float(sc.get("padAfterSec", 0.3))
+        t = cur + float(sc.get("padAfterSec", 0.3)) * scale
         out_scenes.append({"id": sc["id"], "fromFrame": frame(start, fps), "durationInFrames": frame(t, fps) - frame(start, fps),
                            "visual": sc["visual"], "animationPreset": sc["animationPreset"],
                            **({"section": sc["section"]} if sc.get("section") else {})})

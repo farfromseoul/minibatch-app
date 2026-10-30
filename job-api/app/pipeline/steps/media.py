@@ -88,16 +88,20 @@ class TimelineStep:
     def run(self, ctx: StepContext) -> None:
         job = ctx.read_json("job.json")
         scenes, tts = ctx.read_json("scenes.json"), ctx.read_json("tts.json")
-        phrases = spans = pacing = None
-        if job.get("format") == "listicle":  # 목록형(D42): 문장 음성의 쉼에 맞춘 구절·단어 자막, 앞뒤 무음 잘라 일정한 쉼
-            from .listicle import PACING, phrases_for
-            phrases, spans = phrases_for(ctx, scenes, tts)
-            pacing = PACING
-        t = compute_timeline(scenes, tts, fps=job["fps"], width=job["resolution"]["width"], height=job["resolution"]["height"],
-                             theme=job["theme"], phrases=phrases, spans=spans, pacing=pacing)
-        seconds = t["durationInFrames"] / job["fps"]
         target = job["targetDurationSec"]
         tol = int(job.get("durationToleranceSec") or 5)
+        if job.get("format") == "listicle":  # 목록형(D42): 쉼에 맞춘 구절·단어 자막, 앞뒤 무음 잘라 쉼, 쉼으로 길이 맞추기
+            from .listicle import fit_pacing, phrases_for
+            phrases, spans = phrases_for(ctx, scenes, tts)
+            t, scale = fit_pacing(scenes, tts, target=target, tol=tol, fps=job["fps"], theme=job["theme"], phrases=phrases,
+                                  spans=spans, width=job["resolution"]["width"], height=job["resolution"]["height"])
+            if scale != 1.0:
+                ctx.meta["pauseScale"] = scale
+                ctx.note_degraded(f"길이를 맞추려고 쉼을 {scale}배로 조정")
+        else:
+            t = compute_timeline(scenes, tts, fps=job["fps"], width=job["resolution"]["width"],
+                                 height=job["resolution"]["height"], theme=job["theme"])
+        seconds = t["durationInFrames"] / job["fps"]
         if not target - tol <= seconds <= target + tol:  # 55~65초 (기획서 성공 기준 1), 목록형 37~53초. 대본 길이로 맞춘다 (앱 설계 "길이 맞추기")
             raise StepFailure("deterministic", f"영상 길이 {seconds:.1f}초가 {target - tol}~{target + tol}초 밖이다", retry_from="script")
         ctx.write_json("timeline.json", t)
