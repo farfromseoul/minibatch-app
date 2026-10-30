@@ -77,11 +77,27 @@ def next_series_key(s: Session, now: datetime) -> str:
     return f"{prefix}{n}"
 
 
+CONCEPT_RULES = ("- 쉬운 개념에서 어려운 개념 순서로, 앞 화에서 배운 것을 다음 화가 실제로 쓰도록 잇는다.\n"
+                 "- 화마다 개념은 하나. outline 에는 그 화에서 설명할 개념, 꼭 전할 결론 한 문장, 쓸 만한 실제 서비스 예시를 적는다.")
+# 사용자가 주제를 정했을 때 (2026-10-30: '클로드 코드 외부 스킬' 이 '화마다 개념 하나' 규칙에 밀려 마케팅·통계 일반 개념 강의로,
+# '앞 시리즈에 잇기' 에 밀려 앞 시리즈 웹앱 이야기로 샜다)
+THEME_RULES = ("- 모든 화는 주제 '{theme}' 에 직접 속한다. 주제와 상관없는 일반 개념 강의(통계·마케팅 일반론 등)로 새지 않는다.\n"
+               "- 화마다 다룰 것은 하나: 개념 하나 또는 사용법·실습 하나. 주제가 도구·서비스면 실제로 써 보는 순서대로 사용법 화를 만들어도 된다.\n"
+               "- 앞 시리즈와 억지로 이어 붙이지 않는다. 시리즈 안에서는 앞 화를 다음 화가 이어 쓰게 순서를 잡는다.\n"
+               "- outline 에는 그 화에서 다룰 것, 꼭 전할 결론 한 문장, 실제 예시를 적는다.")
+MAX_SOURCE_CHARS = 4000  # 참고 자료 하나에서 프롬프트에 넣는 양
+
+
 def generate_series_plan(s: Session, settings, now: datetime, llm: LlmEngine, *, key: str, category: str,
                          title: Optional[str], count: int, bible: Optional[dict[str, Any]],
-                         theme: Optional[str] = None) -> Series:
+                         theme: Optional[str] = None, references: Optional[list[dict[str, str]]] = None,
+                         episode_titles: Optional[list[str]] = None) -> Series:
     """title 이 없으면 LLM 이 제목도 정한다(D27 자동 운영). 예전 시리즈 제목을 주어 겹치지 않게 한다.
-    theme 은 사용자가 정한 시리즈 주제(텔레그램 입력, D37). 없으면 LLM 이 앞 시리즈를 이어 정한다"""
+    theme 은 사용자가 정한 시리즈 주제(텔레그램 입력, D37). 없으면 LLM 이 앞 시리즈를 이어 정한다.
+    references: 사용자가 준 참고 자료 [{url, text}] → 사실은 이 안에서만, 사실 목록을 bible.facts 에 (2026-10-30)
+    episode_titles: 사용자가 준 화 제목 → 그대로 쓰고 LLM 은 outline 만"""
+    if episode_titles:
+        count = len(episode_titles)
     cat = _category(settings, category)
     if not KEY.match(key):
         raise ApiError(422, "invalid_request", "key 는 영문 소문자·숫자·- 64자 이내")
@@ -93,6 +109,10 @@ def generate_series_plan(s: Session, settings, now: datetime, llm: LlmEngine, *,
     messages, _ = render_messages("series_plan", count=count, category_title=cat.get("title", category),
                        audience=cat.get("audience", ""),
                        title_line=f"'{title}'이라는" if title else "새",
+                       sources=_sources_block(references), given_episodes=_episodes_block(episode_titles),
+                       episode_rules=THEME_RULES.format(theme=theme) if theme else CONCEPT_RULES,
+                       role_line=("진행자 한 명이 사용자가 정한 주제를 화마다 한 가지씩 차례로 설명·실습하는 시리즈를 기획한다." if theme
+                                  else "진행자 한 명이 매화 개념 하나씩 이어서 설명하는 연속 강의형 시리즈를 기획한다."),
                        theme_line=f"사용자가 정한 주제(시리즈 전체를 이 주제 안에서 기획한다): {theme}" if theme else "",
                        title_rule="" if title else "- title: 시리즈 제목 한 줄. 아래 예전 시리즈와 주제·인물이 겹치지 않게\n",
                        recent="" if title or not recent else "예전 시리즈 제목:\n" + "\n".join(f"- {t}" for t in recent) + "\n",
@@ -107,6 +127,9 @@ def generate_series_plan(s: Session, settings, now: datetime, llm: LlmEngine, *,
                                                 "required": ["title", "outline"], "additionalProperties": False},
                      "minItems": count, "maxItems": count}},
         "required": ["bible", "episodes"], "additionalProperties": False}
+    if references:  # 참고 자료에서 확인한 사실 → 대본·검토가 대조한다
+        schema["properties"]["facts"] = {"type": "array", "items": st, "minItems": 3, "maxItems": 15}
+        schema["required"] = schema["required"] + ["facts"]
     if not title:
         schema["properties"] = {"title": st, **schema["properties"]}
         schema["required"] = ["title", "bible", "episodes"]
@@ -120,20 +143,39 @@ def generate_series_plan(s: Session, settings, now: datetime, llm: LlmEngine, *,
             return ["화마다 title 과 outline 이 필요하다"]
         if not title and not str(d.get("title") or "").strip():
             return ["시리즈 title 이 필요하다"]
-        repeats = [f"{i}화 '{e['title']}'" for i, e in enumerate(d["episodes"], start=1)
-                   if normalize_topic(_title(e["title"])) in used_keys]
+        repeats = [] if episode_titles else [  # 사용자가 화 제목을 직접 줬으면 그대로 따른다
+            f"{i}화 '{e['title']}'" for i, e in enumerate(d["episodes"], start=1) if normalize_topic(_title(e["title"])) in used_keys]
         if repeats:  # D33: 이미 다룬 주제는 중복 검사에 걸려 그 화를 만들 수 없다 (2026-10-18 실제)
             return [f"{', '.join(repeats)} 는 이미 다룬 주제다. 이미 다룬 주제 목록과 겹치지 않는 새 개념으로 바꾼다"]
         return []
 
     data = _ask(llm, messages, schema, "series_plan", check)
-    series = Series(id=key, category=category, title=(title or str(data["title"]).strip())[:200], bible=bible or data["bible"], plan_source="llm",
+    plan_bible = dict(bible or data["bible"])
+    if references:
+        plan_bible["sources"] = [{"url": r["url"]} for r in references]
+        plan_bible["facts"] = [str(f) for f in data.get("facts") or []]
+    series = Series(id=key, category=category, title=(title or str(data["title"]).strip())[:200], bible=plan_bible, plan_source="llm",
                     status="PROPOSED", created_at=now, approved_at=None)
     s.add(series)
     s.flush()  # 화보다 시리즈를 먼저 넣는다 (부록 B: 저장 순서)
     for i, e in enumerate(data["episodes"], start=1):  # 번호는 코드가 매긴다
-        s.add(Episode(series_id=key, number=i, title=_title(e["title"]), outline=e["outline"], status="PLANNED"))
+        name = episode_titles[i - 1] if episode_titles else _title(e["title"])  # 사용자가 준 제목이 우선
+        s.add(Episode(series_id=key, number=i, title=name[:200], outline=e["outline"], status="PLANNED"))
     return series
+
+
+def _sources_block(references: Optional[list[dict[str, str]]]) -> str:
+    if not references:
+        return ""
+    parts = [f"[{i}] {r['url']}\n{r['text'][:MAX_SOURCE_CHARS]}" for i, r in enumerate(references, start=1)]
+    return ("참고 자료(사용자가 준 것). 기능·이름·숫자 같은 사실은 이 안에서만 쓴다. 자료에 없는 것을 지어내지 않는다. "
+            "facts 에는 이 자료에서 확인한 사실을 5~15개 적는다:\n" + "\n\n".join(parts))
+
+
+def _episodes_block(titles: Optional[list[str]]) -> str:
+    if not titles:
+        return ""
+    return "화 제목(사용자가 정함. 이 순서·문구 그대로 쓰고 outline 만 채운다):\n" + "\n".join(f"{i}. {t}" for i, t in enumerate(titles, start=1))
 
 
 EP_PREFIX = re.compile(r"^\s*\d+\s*화[\s.:)\-]*")  # LLM 이 붙이는 'N화 ' (번호는 코드가 매긴다, 2026-10-18)
@@ -162,14 +204,14 @@ def _continuity(s: Session, user_theme: bool = False) -> str:
     prev = series_order.previous(s)
     if prev is None:
         return f"이번이 {n}번째 시리즈다(첫 시리즈)."
+    if user_theme:  # 앞 시리즈 전제·화 목록을 주면 거기에 이어 붙인다(2026-10-30 실제) → 겹침은 '이미 다룬 주제' 로만 막는다
+        return f"이번이 {n}번째 시리즈다. 주제는 사용자가 정했다. 앞 시리즈와 억지로 이어 붙이지 않는다."
     eps = s.scalars(select(Episode).where(Episode.series_id == prev.id).order_by(Episode.number)).all()
     lines = "\n".join(f"- {e.number}화 {e.title}" for e in eps)
     premise = (prev.bible or {}).get("premise", "")
     return (f"이번이 {n}번째 시리즈다. 바로 앞 {series_order.label(s, prev)}(전제: {premise})에서 다룬 화:\n{lines}\n"
-            + ("주제는 사용자가 정했다. 앞 시리즈와 이어지는 개념이 있으면 이미 배운 것으로 두고 쓰되, "
-               "앞 시리즈의 개념을 다시 설명하는 화는 만들지 않는다." if user_theme else
-               "이번 시리즈는 앞 시리즈를 본 시청자가 다음으로 궁금해할 주제로 잡는다: 앞 시리즈에서 배운 개념을 바탕으로 "
-               "한 단계 더 깊은 원리나 그 개념이 쓰이는 다음 영역으로 잇는다. 앞 시리즈의 개념을 다시 설명하는 화는 만들지 않는다."))
+            + "이번 시리즈는 앞 시리즈를 본 시청자가 다음으로 궁금해할 주제로 잡는다: 앞 시리즈에서 배운 개념을 바탕으로 "
+              "한 단계 더 깊은 원리나 그 개념이 쓰이는 다음 영역으로 잇는다. 앞 시리즈의 개념을 다시 설명하는 화는 만들지 않는다.")
 
 
 def approve_series_plan(s: Session, series: Series, now: datetime, episodes: Optional[list[dict]],

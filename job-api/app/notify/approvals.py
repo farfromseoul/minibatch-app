@@ -15,6 +15,7 @@ import json
 import logging
 import re
 import threading
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -41,6 +42,10 @@ HELP = """🤖 MiniBatch 명령
 /news 더 — 아직 안 보낸 다음 후보
 /news <GeekNews 글 주소> — 그 글을 평가해 후보로 보냄
 /series 주제, 화수 — 다음 시리즈 계획 만들기 (화수 3~20, 빼면 10)
+   다음 줄에 (선택) 참고 자료 주소(http…, 5개까지) · 화 제목('1.' 또는 '-' 로 시작, 주면 그 개수가 화 수)
+   예) /series 클로드 코드 외부 스킬, 5
+       https://github.com/anthropics/skills
+       1. 스킬이란 무엇일까?
 /help — 이 도움말
 
 버튼
@@ -64,19 +69,47 @@ COUNT = re.compile(r"^(\d+)\s*(화|편)?$")
 EXAMPLE = "예) 쿠버네티스 기초, 8"
 
 
-def parse_request(text: str) -> tuple[str, int]:
-    """'주제, 화수' → (주제, 화수). 화수를 빼면 10. 주제 안의 쉼표는 마지막 쉼표 뒤가 숫자가 아니면 주제로 둔다"""
-    text = text.strip()
-    theme, sep, tail = text.replace("，", ",").rpartition(",")
+MAX_REFERENCES = 5
+EPISODE_LINE = re.compile(r"^\s*(?:\d+\s*[.)]|[-•*])\s*(.+)$")
+
+
+@dataclass
+class PlanRequest:
+    theme: str
+    count: int
+    references: list[str] = field(default_factory=list)  # 참고 자료 주소 (선택)
+    episodes: list[str] = field(default_factory=list)    # 화 제목 (선택, 주면 화 수 = 개수)
+
+
+def parse_request(text: str) -> PlanRequest:
+    """첫 줄 '주제, 화수'(화수를 빼면 10). 다음 줄: http(s)… 는 참고 자료, '1.'·'2)'·'-' 로 시작하면 화 제목 (2026-10-30).
+    주제 안의 쉼표는 마지막 쉼표 뒤가 숫자가 아니면 주제로 둔다"""
+    lines = [l.strip() for l in text.strip().splitlines() if l.strip()]
+    if not lines:
+        raise ValueError("주제가 비어 있습니다")
+    first = lines[0]
+    theme, sep, tail = first.replace("，", ",").rpartition(",")
     m = COUNT.match(tail.strip()) if sep else None
-    theme, count = (theme.strip(), int(m.group(1))) if m else (text, DEFAULT_COUNT)
+    theme, count = (theme.strip(), int(m.group(1))) if m else (first, DEFAULT_COUNT)
+    refs, episodes = [], []
+    for line in lines[1:]:
+        if line.startswith(("http://", "https://")):
+            refs.append(line.split()[0])
+        elif (e := EPISODE_LINE.match(line)):
+            episodes.append(e.group(1).strip()[:200])
+        else:
+            raise ValueError(f"알 수 없는 줄입니다: '{line[:30]}'. 참고 자료는 http 로, 화 제목은 '1.' 이나 '-' 로 시작합니다")
     if not theme:
         raise ValueError("주제가 비어 있습니다")
     if len(theme) > 100:
         raise ValueError("주제는 100자 이내로 써 주세요")
+    if len(refs) > MAX_REFERENCES:
+        raise ValueError(f"참고 자료는 {MAX_REFERENCES}개까지 줄 수 있습니다")
+    if episodes:
+        count = len(episodes)
     if not MIN_COUNT <= count <= MAX_COUNT:
-        raise ValueError(f"화 수는 {MIN_COUNT}~{MAX_COUNT} 사이로 써 주세요")
-    return theme, count
+        raise ValueError(f"화 수는 {MIN_COUNT}~{MAX_COUNT} 사이로 써 주세요" + (" (화 제목 개수)" if episodes else ""))
+    return PlanRequest(theme, count, refs, episodes)
 
 
 class TelegramApprovals:
@@ -260,7 +293,8 @@ class TelegramApprovals:
             head = f"📝 다음 시리즈를 준비할 차례입니다 ({series_order.next_sequence(s)}번째 시리즈)."
             after = [f"앞 시리즈: {series_order.label(s, prev)}"] if prev is not None else []
         text = "\n".join([head, *after, f"주제와 화 수를 답장해 주세요. {EXAMPLE}",
-                          f"화 수는 {MIN_COUNT}~{MAX_COUNT}(빼면 {DEFAULT_COUNT}). 언제든 /series 주제, 화수 로도 만들 수 있습니다."])
+                          f"화 수는 {MIN_COUNT}~{MAX_COUNT}(빼면 {DEFAULT_COUNT}). 다음 줄에 참고 자료 주소(http…)나 화 제목('1.', '-')을 더할 수 있습니다.",
+                          "언제든 /series 주제, 화수 로도 만들 수 있습니다. 자세히: /help"])
         try:
             sent = self.bot.send(text, [("자동으로 정하기", "q:auto"), ("오늘은 건너뛰기", "q:skip")])
         except TelegramError as e:  # 묻지 못했으면 오늘 물은 것으로 치지 않는다 (다음 시각에 다시)
@@ -291,7 +325,7 @@ class TelegramApprovals:
         if chat != self.bot.chat_id or str((msg.get("from") or {}).get("id", "")) != self.bot.chat_id:
             return  # 다른 대화에는 답하지 않는다
         text = str(msg.get("text") or "").strip()
-        cmd = text.split(" ", 1)[0].split("@", 1)[0]
+        cmd = re.split(r"\s", text, maxsplit=1)[0].split("@", 1)[0]  # '/series' 다음이 줄바꿈이어도
         if cmd == "/status":  # 현황 (n8n 0번 현황 폼과 같은 내용)
             self._safe_send(self.status_text(), None)
             return
@@ -303,8 +337,8 @@ class TelegramApprovals:
             return
         with self._state_lock:
             st = self._load()
-            if text.split(" ", 1)[0].split("@", 1)[0] == "/series":
-                body = text.split(" ", 1)[1] if " " in text else ""
+            if cmd == "/series":
+                body = re.split(r"\s", text, maxsplit=1)[1] if re.search(r"\s", text) else ""
                 if not body.strip():
                     self._safe_send(f"/series 주제, 화수 로 다음 시리즈 계획을 만듭니다. {EXAMPLE}", None)
                     return
@@ -313,15 +347,16 @@ class TelegramApprovals:
             else:
                 return  # 묻는 중이 아닐 때의 글은 답으로 받지 않는다
             try:
-                theme, count = parse_request(body)
+                req = parse_request(body)
             except ValueError as e:
                 self._safe_send(f"⚠️ {e}. {EXAMPLE}", None)
                 return
             if self._plan_waiting():
                 self._safe_send("승인 대기 계획이 있어 새 계획을 만들지 않았습니다. 그 계획을 먼저 승인하거나 n8n 폼에서 처리해 주세요.", None)
                 return
-            self._want(st, theme, count)
-        self._safe_send(f"⏳ 계획을 만드는 중입니다: {theme}, {count}화", None)
+            self._want(st, req.theme, req.count, req.references, req.episodes)
+        extra = (f" · 참고 자료 {len(req.references)}개" if req.references else "") + (" · 화 제목 직접" if req.episodes else "")
+        self._safe_send(f"⏳ 계획을 만드는 중입니다: {req.theme}, {req.count}화{extra}", None)
 
     def _question_button(self, target: str) -> str:
         with self._state_lock:
@@ -389,9 +424,11 @@ class TelegramApprovals:
     def status_text(self) -> str:
         return overview.collect(self.db, self.clock, telegram=self, asmr=self.asmr, news=self.news)["text"]
 
-    def _want(self, st: dict[str, Any], theme: Optional[str], count: int) -> None:
+    def _want(self, st: dict[str, Any], theme: Optional[str], count: int, references: Optional[list[str]] = None,
+              episodes: Optional[list[str]] = None) -> None:
         """만들 계획을 상태 파일에 적는다. 실제 생성은 make_wanted_plan (제작 중이면 끝난 뒤)"""
-        st.update(waiting=False, want={"theme": theme, "count": count, "category": st.get("category") or "ai-it"})
+        st.update(waiting=False, want={"theme": theme, "count": count, "category": st.get("category") or "ai-it",
+                                       "references": references or [], "episodes": episodes or []})
         self._save(st)
 
     def make_wanted_plan(self) -> None:
@@ -403,11 +440,15 @@ class TelegramApprovals:
             if self.providers is None:
                 raise ApiError(503, "llm_unavailable", "LLM 제공자 설정(providers.yaml)이 없다")
             llm = self.providers.llm("series_plan")
+            refs, unread = self._read_references(want.get("references") or [])
+            if unread:
+                self._safe_send("⚠️ 참고 자료를 읽지 못해 빼고 만듭니다: " + ", ".join(unread), None)
             with self.runner.exclusive("시리즈 계획 생성"), self.db() as s:
                 now = self.clock()
                 series = generation.generate_series_plan(
                     s, self.settings, now, llm, key=generation.next_series_key(s, now), category=want["category"],
-                    title=None, count=int(want["count"]), bible=None, theme=want.get("theme"))
+                    title=None, count=int(want["count"]), bible=None, theme=want.get("theme"),
+                    references=refs or None, episode_titles=want.get("episodes") or None)
                 s.commit()
                 series_id = series.id
         except ApiError as e:
@@ -430,6 +471,14 @@ class TelegramApprovals:
             st = self._load()
             fn(st)
             self._save(st)
+
+    def _read_references(self, urls: list[str]) -> tuple[list[dict[str, str]], list[str]]:
+        """참고 자료를 IT 뉴스 원문 읽기와 같은 방식(SSRF 검사, 본문만)으로 읽는다. ([{url, text}], [못 읽은 주소])"""
+        read, unread = [], []
+        for url in urls:
+            text = self.news.fetch_article(url) if self.news is not None else None
+            (read.append({"url": url, "text": text}) if text else unread.append(url))
+        return read, unread
 
     def _clear_want(self) -> None:
         self._edit_state(lambda st: st.pop("want", None))

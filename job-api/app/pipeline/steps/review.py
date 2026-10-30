@@ -62,8 +62,15 @@ class ReviewStep:
 
         numbered = "\n".join(f"{i}. {s}" for i, s in enumerate(sentences, start=1))
         news = job.get("news")
-        facts = ("\n원문 사실 목록(IT 뉴스, D40). 대본의 숫자·이름·날짜·주장이 이 목록과 다르거나 목록에 없으면 critical:\n"
-                 + "\n".join(f"- {f}" for f in news["facts"]) + "\n") if news else ""
+        series_facts = ((job.get("series") or {}).get("bible") or {}).get("facts") or []  # 사용자가 준 참고 자료 (2026-10-30)
+        if news:
+            facts = ("\n원문 사실 목록(IT 뉴스, D40). 대본의 숫자·이름·날짜·주장이 이 목록과 다르거나 목록에 없으면 critical:\n"
+                     + "\n".join(f"- {f}" for f in news["facts"]) + "\n")
+        elif series_facts:
+            facts = ("\n시리즈 참고 자료에서 확인한 사실. 대본의 도구 이름·기능·숫자가 이와 다르면 critical:\n"
+                     + "\n".join(f"- {f}" for f in series_facts) + "\n")
+        else:
+            facts = ""
         messages, version = render_messages("review", topic=job["topic"], audience=cat.get("audience", ""), numbered=numbered,
                                             rules=", ".join(cat.get("review", {}).get("rules", ["사실 오류"])), facts=facts)
 

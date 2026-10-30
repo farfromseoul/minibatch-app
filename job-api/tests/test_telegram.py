@@ -4,6 +4,7 @@ job-api 가 검토 대기 알림을 [승인][반려] 버튼과 함께 보내고,
 나가는 연결만 쓴다(MacBook 을 인터넷에 열지 않는다). 실제 텔레그램 대신 httpx.MockTransport.
 """
 import json
+import unittest
 
 import httpx
 
@@ -494,3 +495,54 @@ class SeriesRequestTest(TelegramCase):
         self.poll()
 
         self.assertEqual(len(self.proposed()), 1)
+
+
+class ParseRequestTest(unittest.TestCase):
+    """주제 입력: 첫 줄 '주제, 화수', 다음 줄 http… 는 참고 자료, '1.'·'-' 는 화 제목 (2026-10-30 사용자)"""
+
+    def test_single_line_is_as_before(self):
+        from app.notify.approvals import parse_request
+        r = parse_request("쿠버네티스 기초, 8")
+        self.assertEqual((r.theme, r.count, r.references, r.episodes), ("쿠버네티스 기초", 8, [], []))
+
+    def test_links_and_episode_list(self):
+        from app.notify.approvals import parse_request
+        r = parse_request("클로드 코드 외부 스킬, 5\nhttps://github.com/anthropics/skills\n1. 스킬이란 무엇일까?\n2) frontend-design 스킬\n- webapp-testing 스킬")
+
+        self.assertEqual(r.references, ["https://github.com/anthropics/skills"])
+        self.assertEqual(r.episodes, ["스킬이란 무엇일까?", "frontend-design 스킬", "webapp-testing 스킬"])
+        self.assertEqual(r.count, 3)  # 화 목록을 주면 목록 개수
+
+    def test_unknown_line_is_explained(self):
+        from app.notify.approvals import parse_request
+        with self.assertRaises(ValueError):
+            parse_request("주제, 5\n이건 무슨 줄인지 모름")
+
+
+class SeriesRequestRichTest(TelegramCase):
+    def setUp(self):
+        self.llm = FakeLlm()
+        super().setUp()
+
+    def make_providers(self):
+        return FakeRegistry(self.llm)
+
+    def test_series_command_with_links_and_titles(self):
+        import httpx as _httpx
+        page = "<html><body><article><p>스킬은 SKILL.md 와 스크립트를 담은 폴더다. Claude 가 필요할 때 불러 쓴다.</p></article></body></html>"
+        self.app.state.news.http = _httpx.Client(transport=_httpx.MockTransport(
+            lambda r: _httpx.Response(200, text=page, headers={"content-type": "text/html"})))
+        self.app.state.news.resolve = lambda host: ["93.184.216.34"]
+        self.llm.responses = [dict(plan(3, "클로드 코드 스킬 활용"), facts=["스킬은 SKILL.md 를 담은 폴더다", "필요할 때 불러 쓴다", "스크립트를 함께 담을 수 있다"])]
+        self.tg.say("/series 클로드 코드 외부 스킬, 5\nhttps://example.com/skills\n1. 스킬이란?\n2. 스킬 설치\n3. 스킬 만들기")
+
+        self.poll()
+
+        prompt = self.llm.last_user_text()
+        self.assertIn("SKILL.md", prompt)  # 참고 자료 본문
+        self.assertIn("1. 스킬이란?", prompt)
+        (sid,) = [x["id"] for x in self.get("/series?status=PROPOSED").json()["items"]]
+        detail = self.get(f"/series/{sid}").json()
+        self.assertEqual([e["title"] for e in detail["episodes"]], ["스킬이란?", "스킬 설치", "스킬 만들기"])
+        self.assertEqual(detail["bible"]["sources"][0]["url"], "https://example.com/skills")
+        self.assertIn("SKILL.md", detail["bible"]["facts"][0])

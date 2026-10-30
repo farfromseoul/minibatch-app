@@ -92,6 +92,27 @@ class SeriesPlanTest(GenCase):
         self.assertIn("쿠버네티스 기초", self.llm.last_user_text())
         self.assertEqual(res.json()["title"], "쿠버네티스 첫걸음")
 
+    def test_theme_rules_keep_every_episode_on_theme_and_allow_practice(self):
+        """주제를 주면 앞 시리즈에 억지로 잇지 않고, 주제에 직접 속하는 화만, 실습형 허용 (2026-10-30:
+        '클로드 코드 외부 스킬' 이 마케팅 개념 강의·앞 시리즈 웹앱 이야기로 샜다)"""
+        self.llm.responses = [dict(PLAN, title="t")]
+
+        self.post("/series", {"theme": "클로드 코드 외부 스킬", "episodeCount": 3})
+
+        system = self.llm.requests[-1]["messages"][0]["content"]
+        user = self.llm.last_user_text()
+        self.assertIn("'클로드 코드 외부 스킬' 에 직접 속한다", system)
+        self.assertNotIn("매화 개념 하나씩", system)
+        self.assertIn("사용법", system)
+        self.assertNotIn("앞 시리즈를 본 시청자가 다음으로 궁금해할", user)
+
+    def test_without_theme_rules_are_as_before(self):
+        self.llm.responses = [dict(PLAN, title="t")]
+
+        self.post("/series", {"episodeCount": 3})
+
+        self.assertIn("화마다 개념은 하나", self.llm.requests[-1]["messages"][0]["content"])
+
     def test_wrong_episode_count_is_asked_again(self):
         self.llm.responses = [dict(PLAN, episodes=PLAN["episodes"][:2]), PLAN]
 
