@@ -44,8 +44,9 @@ class QcStep:
             checks.append({"name": name, "ok": bool(ok), "value": value, "expected": expected, "retryFrom": retry_from})
 
         target = job["targetDurationSec"]
+        tol = int(job.get("durationToleranceSec") or 5)  # 목록형 45±8초 (D42), 나머지 60±5초
         d = a["durationSec"]
-        check("length", target - 5 <= d <= target + 5, round(d, 2), f"{target - 5}~{target + 5}초", "script")
+        check("length", target - tol <= d <= target + tol, round(d, 2), f"{target - tol}~{target + tol}초", "script")
         v = a.get("video") or {}
         check("resolution", (v.get("width"), v.get("height")) == (t["width"], t["height"]),
               f"{v.get('width')}x{v.get('height')}", f"{t['width']}x{t['height']}", "render")
@@ -103,7 +104,7 @@ def quota_retry_at(reason: Optional[str], now: Optional[datetime] = None) -> str
 
 
 def _description(script: dict[str, Any], playlist_id: Optional[str], credits: Optional[list] = None,
-                 news: Optional[dict[str, Any]] = None) -> str:
+                 news: Optional[dict[str, Any]] = None, listicle: Optional[dict[str, Any]] = None) -> str:
     parts = [p for p in (script.get("hook"), script.get("summary")) if p]
     tags = " ".join(h if h.startswith("#") else f"#{h}" for h in script.get("hashtags", []))
     if tags:
@@ -118,6 +119,9 @@ def _description(script: dict[str, Any], playlist_id: Optional[str], credits: Op
     if news:  # IT 뉴스 출처 (D40)
         parts.append(f"원문: {news.get('sourceTitle') or ''} {news['sourceUrl']}".replace("  ", " ")
                      + f"\nGeekNews 소개: {news['gnUrl']}")
+    sources = [x.get("url") for x in (listicle or {}).get("sources") or [] if x.get("url")]
+    if sources:  # 목록형 참고 자료 (D42)
+        parts.append("참고:\n" + "\n".join(sources))
     return "\n\n".join(parts)  # 고지 문구는 연결부(upload_video)가 끝에 붙인다
 
 
@@ -177,7 +181,7 @@ class UploadStep:
         else:
             title = (f"{info['title']} {info['number']}화: {info['episodeTitle']}" if info
                      else (script.get("titleCandidates") or [job["topic"]])[0])
-            res = yt.upload_video(video, title=title, description=_description(script, playlist_id, visuals.get("credits"), job.get("news")), disclosure=disclosure,
+            res = yt.upload_video(video, title=title, description=_description(script, playlist_id, visuals.get("credits"), job.get("news"), job.get("listicle")), disclosure=disclosure,
                                   category_id=str(ycfg.get("category_id", "28")),
                                   tags=[h.lstrip("#") for h in script.get("hashtags", [])], synthetic=synthetic)
             video_id, replaces = res["id"], prev_video

@@ -25,7 +25,7 @@ from sqlalchemy import select
 from app.core.errors import ApiError
 from app.core.timeutil import kst_date
 from app.db.models import Episode, Job, Publication, Series
-from app.domain import cancel as cancel_domain, generation, overview, review, series_order, stuck
+from app.domain import cancel as cancel_domain, generation, jobs as jobs_domain, overview, review, series_order, stuck
 from app.domain.status import EP_DONE
 from app.publish.approve import approve_and_publish
 
@@ -46,6 +46,10 @@ HELP = """🤖 MiniBatch 명령
    예) /series 클로드 코드 외부 스킬, 5
        https://github.com/anthropics/skills
        1. 스킬이란 무엇일까?
+/top 주제, 개수 — 목록형 쇼츠 하나 만들기 (개수 3~5, 빼면 5. 다음 정각에 만든다)
+   다음 줄에 (선택) 참고 자료 주소(http…, 5개까지) · 항목 이름('1.' 또는 '-' 로 시작, 주면 그 개수)
+   예) /top 클로드 코드에서 진짜 쓸 기능, 5
+       https://docs.anthropic.com/claude-code
 /help — 이 도움말
 
 버튼
@@ -67,6 +71,8 @@ HELP = """🤖 MiniBatch 명령
 DEFAULT_COUNT, MIN_COUNT, MAX_COUNT = 10, 3, 20  # 시리즈 화 수 (D37)
 COUNT = re.compile(r"^(\d+)\s*(화|편)?$")
 EXAMPLE = "예) 쿠버네티스 기초, 8"
+TOP_DEFAULT, TOP_MIN, TOP_MAX = 5, 3, 5  # 목록형 쇼츠 항목 수 (D42)
+TOP_EXAMPLE = "예) /top 개발자가 매일 쓰는 터미널 도구, 5"
 
 
 MAX_REFERENCES = 5
@@ -81,16 +87,17 @@ class PlanRequest:
     episodes: list[str] = field(default_factory=list)    # 화 제목 (선택, 주면 화 수 = 개수)
 
 
-def parse_request(text: str) -> PlanRequest:
+def parse_request(text: str, *, default: int = DEFAULT_COUNT, lo: int = MIN_COUNT, hi: int = MAX_COUNT,
+                  unit: str = "화") -> PlanRequest:
     """첫 줄 '주제, 화수'(화수를 빼면 10). 다음 줄: http(s)… 는 참고 자료, '1.'·'2)'·'-' 로 시작하면 화 제목 (2026-10-30).
-    주제 안의 쉼표는 마지막 쉼표 뒤가 숫자가 아니면 주제로 둔다"""
+    주제 안의 쉼표는 마지막 쉼표 뒤가 숫자가 아니면 주제로 둔다. /top(D42)도 같은 모양: 개수 3~5, 줄은 항목 이름"""
     lines = [l.strip() for l in text.strip().splitlines() if l.strip()]
     if not lines:
         raise ValueError("주제가 비어 있습니다")
     first = lines[0]
     theme, sep, tail = first.replace("，", ",").rpartition(",")
     m = COUNT.match(tail.strip()) if sep else None
-    theme, count = (theme.strip(), int(m.group(1))) if m else (first, DEFAULT_COUNT)
+    theme, count = (theme.strip(), int(m.group(1))) if m else (first, default)
     refs, episodes = [], []
     for line in lines[1:]:
         if line.startswith(("http://", "https://")):
@@ -98,7 +105,7 @@ def parse_request(text: str) -> PlanRequest:
         elif (e := EPISODE_LINE.match(line)):
             episodes.append(e.group(1).strip()[:200])
         else:
-            raise ValueError(f"알 수 없는 줄입니다: '{line[:30]}'. 참고 자료는 http 로, 화 제목은 '1.' 이나 '-' 로 시작합니다")
+            raise ValueError(f"알 수 없는 줄입니다: '{line[:30]}'. 참고 자료는 http 로, {unit} 제목은 '1.' 이나 '-' 로 시작합니다")
     if not theme:
         raise ValueError("주제가 비어 있습니다")
     if len(theme) > 100:
@@ -107,8 +114,8 @@ def parse_request(text: str) -> PlanRequest:
         raise ValueError(f"참고 자료는 {MAX_REFERENCES}개까지 줄 수 있습니다")
     if episodes:
         count = len(episodes)
-    if not MIN_COUNT <= count <= MAX_COUNT:
-        raise ValueError(f"화 수는 {MIN_COUNT}~{MAX_COUNT} 사이로 써 주세요" + (" (화 제목 개수)" if episodes else ""))
+    if not lo <= count <= hi:
+        raise ValueError(f"{unit} 수는 {lo}~{hi} 사이로 써 주세요" + (f" ({unit} 제목 개수)" if episodes else ""))
     return PlanRequest(theme, count, refs, episodes)
 
 
@@ -335,6 +342,9 @@ class TelegramApprovals:
         if cmd == "/news":
             self._news_command(text.split(" ", 1)[1].strip() if " " in text else "")
             return
+        if cmd == "/top":
+            self._top_command(re.split(r"\s", text, maxsplit=1)[1] if re.search(r"\s", text) else "")
+            return
         with self._state_lock:
             st = self._load()
             if cmd == "/series":
@@ -373,6 +383,28 @@ class TelegramApprovals:
                 self._want(st, None, int(st.get("count") or DEFAULT_COUNT))
                 return "🤖 주제를 자동으로 정합니다. 계획이 나오면 [계획 승인] 메시지를 보냅니다."
         return f"모르는 버튼: q:{target}"
+
+    def _top_command(self, body: str) -> None:
+        """/top 주제, 개수 (+참고 자료, +항목 이름): 목록형 쇼츠 작업을 만든다 (D42). 다음 정각 1번 워크플로가 만든다"""
+        if not body.strip():
+            self._safe_send(f"/top 주제, 개수 로 목록형 쇼츠를 만듭니다. {TOP_EXAMPLE}", None)
+            return
+        try:
+            req = parse_request(body, default=TOP_DEFAULT, lo=TOP_MIN, hi=TOP_MAX, unit="항목")
+        except ValueError as e:
+            self._safe_send(f"⚠️ {e}. {TOP_EXAMPLE}", None)
+            return
+        try:
+            with self.db() as s:
+                job = jobs_domain.create_listicle_job(s, self.settings, self.clock(), topic=req.theme, count=req.count,
+                                                      references=req.references, items=[i[:60] for i in req.episodes])
+                s.commit()
+                job_id = job.id
+        except ApiError as e:
+            self._safe_send(f"⚠️ {e.message}", None)
+            return
+        extra = (f" · 참고 자료 {len(req.references)}개" if req.references else "") + (" · 항목 직접" if req.episodes else "")
+        self._safe_send(f"✅ 목록형 쇼츠 등록: {req.theme}, {req.count}개{extra} ({job_id})\n다음 정각 생산에서 먼저 만듭니다. 진행은 /status", None)
 
     def _news_command(self, arg: str) -> None:
         """/news: 새 글 모아 평가해 보내기, /news 더: 다음 후보, /news <GeekNews 주소>: 그 글을 평가해 보내기"""

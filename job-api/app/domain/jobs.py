@@ -128,6 +128,18 @@ def create_news_job(s: Session, settings, now: datetime, *, title: str, news: di
     return _insert(s, settings, now, topic=title, category="it-news", extra={"news": news})
 
 
+LISTICLE = "listicle"
+
+
+def create_listicle_job(s: Session, settings, now: datetime, *, topic: str, count: int,
+                        references: Optional[list[str]] = None, items: Optional[list[str]] = None) -> Job:
+    """목록형 쇼츠 (D42): 텔레그램 /top·POST /listicle. 단독 작업, 참고 자료·항목 이름은 작업 입력에 두고 주제 단계가 읽는다"""
+    ensure_category(settings, LISTICLE)
+    items = [i.strip() for i in (items or []) if i.strip()]
+    return _insert(s, settings, now, topic=topic, category=LISTICLE,
+                   extra={"listicle": {"count": len(items) or count, "references": list(references or []), "items": items}})
+
+
 def _auto_select(s: Session, settings, now: datetime) -> Job:
     _check_auto_limits(s, settings, now)
     skipped = []  # 왜 못 만들었는지 (no_candidates 알림에 싣는다. 2026-10-18: 이유가 숨어 원인을 찾기 어려웠다)

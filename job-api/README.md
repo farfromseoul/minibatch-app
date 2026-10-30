@@ -15,14 +15,16 @@ app/
     runner.py           # 단계 실행 규칙 1~8
     files.py            # 해시 (멱등 판정)
     steps/              # 단계 구현: topic, script, review, scenes, tts, timeline, visuals, render, qc, upload
+                        #   listicle.py: 목록형 쇼츠(D42) 대본·장면·자막 구절 (script·scenes·timeline 이 format=listicle 일 때 부름)
   media/ffmpeg.py       # ffprobe·ffmpeg 측정 (qc)
+  media/align.py        # 목록형 자막: 문장 WAV 의 쉼에 맞춘 구절·단어 시각 (표준 라이브러리만)
   youtube/client.py     # YouTube Data API: 갱신 토큰, 재개 가능한 업로드, 재생목록, 공개 범위, 설명란
   publish/approve.py    # 승인 뒤 공개 전환, 앞 화 설명란 다음 화 링크 (승인 기록 검사는 YouTube 호출 바로 앞)
   llm/                  # LLM 연결부, 재요청, 프롬프트 파일
   providers.py          # providers.yaml 읽기·검사
   schemas/templates.py  # 템플릿 속성 규격
   api/                  # HTTP 경로와 응답 모양
-content/categories/     # 카테고리 설정 묶음 (D23). 지금은 ai-it 하나
+content/categories/     # 카테고리 설정 묶음 (D23): ai-it, it-news(D40), listicle(D42, format·목표 길이·허용 범위)
 tests/                  # 단위 테스트 (unittest)
 ```
 
@@ -63,6 +65,7 @@ tests/                  # 단위 테스트 (unittest)
 | POST | `/topics/generate` `{category, count}` | LLM 이 주제 후보를 만들어 PROPOSED 로 저장 (기존·중복 제외). 단계와 같은 전역 잠금(409 busy), LLM 없음 503 |
 | POST | `/series` `{episodeCount, key?, title?}` (계획 없이) | LLM 이 설정(bible)·화별 계획을 만들어 PROPOSED. title 이 없으면 LLM 이 예전 시리즈와 겹치지 않는 제목도 정하고, key 가 없으면 `s<한국 날짜>-<순번>` |
 | POST | `/series/{id}/approve` `{approvedBy, episodes?, bible?}` | 승인 대기 시리즈 승인 (고친 계획 반영) |
+| POST | `/listicle` `{topic, count?(3~5), references?[http(s), 5개], items?[3~5]}` | 목록형 쇼츠 작업(D42). 텔레그램 `/top` 과 같다. `/jobs/next` 는 IT 뉴스 → 목록형 → 나머지 순 |
 
 ## LLM 단계 (script · review · scenes)
 
@@ -82,7 +85,7 @@ tests/                  # 단위 테스트 (unittest)
 | 단계 | 하는 일 | 실패 |
 | --- | --- | --- |
 | tts | 발음 사전(`content/pronunciation.yaml`) 적용 → tts-worker `POST /synthesize`(카테고리 목소리) → `tts/`, `tts.json`(원문·읽는 문장·길이) | 연결 실패·시간 초과·5xx transient, 4xx deterministic |
-| timeline | 음성 길이로 장면·자막·음성 시작 프레임 확정(`app/pipeline/timeline_calc.py`) | 55~65초 밖이면 deterministic `retry_from=script` |
+| timeline | 음성 길이로 장면·자막·음성 시작 프레임 확정(`app/pipeline/timeline_calc.py`). 목록형은 자막을 구절·단어로(`app/media/align.py`) | 목표 ± 허용(기본 60±5초, 목록형 45±8초) 밖이면 deterministic `retry_from=script` |
 | visuals | 생성 클립 장면만 처리. `clip_engine: none`이면 그대로 통과 | 생성기는 Phase 2 |
 | render | render-worker `POST /render`(`MINIBATCH_RENDER_WORKER_URL`) → `render/final.mp4` → job-api 가 ffmpeg `loudnorm`(두 번: 재고 바꾸기)으로 오디오만 -14 LUFS·최대 -1.5 dBTP 로 맞춤(영상은 복사) | 409·5xx transient, 422 deterministic `retry_from=scenes`, 음량 맞추기 실패 deterministic `retry_from=render` |
 
@@ -90,7 +93,7 @@ tests/                  # 단위 테스트 (unittest)
 
 | 단계 | 하는 일 | 실패 |
 | --- | --- | --- |
-| qc | ffprobe·ffmpeg(`ebur128`, `silencedetect`)로 길이 55~65초, 1080×1920·30fps, 프레임 수 ±1, AAC 1개, 무음 2.5초 이하, 자막이 영상 안·겹침 없음, 음량 -14±2 LUFS → `qc.json` | deterministic. `retry_from` = 길이 script, 자막 scenes, 무음 tts, 해상도·프레임·오디오·음량 render (어긋난 것 중 가장 앞) |
+| qc | ffprobe·ffmpeg(`ebur128`, `silencedetect`)로 길이 목표 ± 허용(기본 55~65초, 목록형 37~53초), 1080×1920·30fps, 프레임 수 ±1, AAC 1개, 무음 2.5초 이하, 자막이 영상 안·겹침 없음, 음량 -14±2 LUFS → `qc.json` | deterministic. `retry_from` = 길이 script, 자막 scenes, 무음 tts, 해상도·프레임·오디오·음량 render (어긋난 것 중 가장 앞) |
 | upload | 비공개 업로드(제목: 시리즈면 `시리즈 N화: 화 제목`, 아니면 제목 후보 1번. 설명: 후킹·요약·해시태그·시리즈 재생목록 링크, 끝에 고지 문구는 연결부가 항상 붙임). 시리즈면 재생목록(공개)을 처음 한 번 만들고 끝에 넣음 → `upload.json` | 할당량 quota(`retryAt` 태평양 자정 5분 뒤), 연결·5xx transient, 토큰 만료·4xx deterministic. 같은 파일은 다시 올리지 않음(`publication.uploaded_sha256`), 다시 렌더하면 새로 올리고 `replaces`에 앞 영상 ID |
 
 ## 텔레그램 승인 (D28)

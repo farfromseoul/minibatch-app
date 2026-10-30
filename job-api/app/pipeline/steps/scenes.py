@@ -13,7 +13,7 @@ from typing import Any
 
 from app.core.category import load_category
 from app.llm.prompting import render
-from app.schemas.templates import TEMPLATES, check_props
+from app.schemas.templates import LISTICLE_TEMPLATES, TEMPLATES, check_props
 from app.text.cta import outro_for
 from app.text.sentences import script_sentences
 
@@ -74,7 +74,11 @@ class ScenesStep:
         script = ctx.read_json("script.json")
         job = ctx.read_json("job.json")
         cat = load_category(ctx.settings, job["category"])
-        templates = [t for t in (cat.get("templates") or list(TEMPLATES)) if t in TEMPLATES]
+        if job.get("format") == "listicle":  # 목록형 쇼츠 (D42): 틀은 코드, 항목 그림만 LLM
+            from .listicle import run_scenes
+            run_scenes(ctx, script, job, cat)
+            return
+        templates = [t for t in (cat.get("templates") or [t for t in TEMPLATES if t not in LISTICLE_TEMPLATES]) if t in TEMPLATES]
         if not templates:
             raise StepFailure("deterministic", "카테고리에 쓸 수 있는 템플릿이 없다")
         sentences = script_sentences(script)

@@ -16,7 +16,7 @@ from app.core.auth import require_token
 from app.core.errors import ApiError
 from app.db.models import Job, Series, Topic
 from app.domain import cancel as cancel_domain, generation, overview, review, series as series_domain, topics as topic_domain
-from app.domain.jobs import create_job
+from app.domain.jobs import create_job, create_listicle_job
 from app.domain.upload_order import next_job
 from app.publish import approve as publishing
 from app.youtube.client import YouTubeError
@@ -45,6 +45,14 @@ class CreateJobBody(BaseModel):
     topic: Optional[str] = Field(default=None, min_length=1, max_length=200)
     category: str = "ai-it"
     seriesId: Optional[str] = None
+
+
+class ListicleBody(BaseModel):
+    """목록형 쇼츠 (D42). items 를 주면 그 개수가 count"""
+    topic: str = Field(min_length=1, max_length=100)
+    count: int = Field(default=5, ge=3, le=5)
+    references: list[str] = Field(default_factory=list, max_length=5)
+    items: list[str] = Field(default_factory=list, max_length=5)
 
 
 class StepBody(BaseModel):
@@ -231,6 +239,20 @@ def post_job(body: CreateJobBody, request: Request) -> dict[str, Any]:
     with st.db() as s:
         job = create_job(s, st.settings, st.clock(), topic=body.topic, category=body.category,
                          series_id=body.seriesId)
+        s.commit()
+        return job_summary(job)
+
+
+@api.post("/listicle", status_code=201)
+def post_listicle(body: ListicleBody, request: Request) -> dict[str, Any]:
+    if any(not r.startswith(("http://", "https://")) for r in body.references):
+        raise ApiError(400, "invalid_reference", "참고 자료는 http(s) 주소만")
+    if body.items and not 3 <= len(body.items) <= 5:
+        raise ApiError(400, "invalid_items", "항목 이름은 3~5개")
+    st = _st(request)
+    with st.db() as s:
+        job = create_listicle_job(s, st.settings, st.clock(), topic=body.topic, count=body.count,
+                                  references=body.references, items=[i[:60] for i in body.items])
         s.commit()
         return job_summary(job)
 

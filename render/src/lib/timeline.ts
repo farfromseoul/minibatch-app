@@ -6,8 +6,12 @@ export type AnimationPreset = "pop" | "fade" | "sequential" | "draw";
 
 export type TemplateVisual = { type: "template"; component: string; props: Record<string, unknown> };
 
+/** 목록형(D42) 장면이 어느 부분인지. index 는 항목 번호(1부터) */
+export type Section = { kind: "hook" | "item" | "recap" | "outro"; index?: number };
+
 export type TimelineScene = {
   id: string;
+  section?: Section;
   fromFrame: number;
   durationInFrames: number;
   visual: TemplateVisual;
@@ -27,11 +31,21 @@ export type Timeline = {
   header?: { brand?: string; title?: string };
   scenes: TimelineScene[];
   audio: { src: string; fromFrame: number }[];
-  captions: { text: string; fromFrame: number; toFrame: number }[];
+  /** 목록형(D42): words 가 있으면 몇 단어씩 보이며 지금 단어를 강조한다 */
+  captions: { text: string; fromFrame: number; toFrame: number; words?: { text: string; fromFrame: number; emphasis?: boolean }[] }[];
   bgm: null;
+  /** 목록형(D42) 위쪽 진행 표시 */
+  tracker?: { items: { name: string; meta?: string }[] };
 };
 
-export const TEMPLATES = ["TitleReveal", "FlowDiagram", "ComparisonCards", "NeuralNetwork", "SummaryScene"] as const;
+export const LISTICLE_TEMPLATES = ["LHookClaim", "LHookReveal", "LItemCard", "LChat", "LSteps", "LBeforeAfter", "LTerminal",
+  "LStat", "LIcon", "LCompare", "LRecap", "LOutro"] as const;
+export const TEMPLATES = ["TitleReveal", "FlowDiagram", "ComparisonCards", "NeuralNetwork", "SummaryScene", ...LISTICLE_TEMPLATES] as const;
+export const ICONS = ["search", "memory", "shield", "bolt", "clock", "code", "chat", "check", "warning", "lock", "globe", "terminal",
+  "chart", "sparkles", "book", "gear"] as const;
+const SECTION_KINDS = ["hook", "item", "recap", "outro"];
+/** 목록형 장면은 목록형 테마에서만 그린다 (다른 스타일의 장면 등록부에는 없다) */
+export const LISTICLE_THEMES = ["gold"];
 export const PRESETS: AnimationPreset[] = ["pop", "fade", "sequential", "draw"];
 export const MAX_FLOW_NODES = 6;
 
@@ -45,9 +59,60 @@ export function isSafeRelative(src: unknown): boolean {
   return src.split("/").every((part) => part !== ".." && part !== "");
 }
 
+const strList = (v: unknown, min: number, max: number): boolean =>
+  Array.isArray(v) && v.length >= min && v.length <= max && v.every(isStr);
+const optStr = (v: unknown): boolean => v === undefined || isStr(v);
+
 function checkProps(component: string, p: Record<string, any>, where: string): string[] {
   const e: string[] = [];
+  const need = (ok: boolean, what: string) => {
+    if (!ok) e.push(`${where}: ${component} ${what}`);
+  };
   switch (component) {
+    case "LHookClaim":
+      need(isStr(p.kicker) && isStr(p.claim) && optStr(p.claimNote) && optStr(p.aside), "는 {kicker, claim, claimNote?, aside?}");
+      break;
+    case "LHookReveal":
+      need(isStr(p.kicker) && isStr(p.headline) && optStr(p.highlight) && isInt(p.count) && p.count >= 2 && p.count <= 7,
+        "는 {kicker, headline, highlight?, count 2~7}");
+      break;
+    case "LItemCard":
+      need(isInt(p.number) && p.number >= 1 && isStr(p.name) && optStr(p.meta) && optStr(p.tagline) && optStr(p.badge),
+        "는 {number, name, meta?, tagline?, badge?}");
+      break;
+    case "LChat":
+      need(isStr(p.prompt) && strList(p.results, 1, 4) && optStr(p.status), "는 {prompt, results[1~4], status?}");
+      break;
+    case "LSteps":
+      need(strList(p.steps, 2, 4) && (p.checks === undefined || strList(p.checks, 0, 4)), "는 {steps[2~4], checks?[0~4]}");
+      break;
+    case "LBeforeAfter":
+      need(["before", "after"].every((k) => isObj(p[k]) && isStr(p[k].label) && optStr(p[k].note)),
+        "는 {before: {label, note?}, after: {label, note?}}");
+      break;
+    case "LTerminal":
+      need(isStr(p.command) && strList(p.output, 1, 4), "는 {command, output[1~4]}");
+      break;
+    case "LStat":
+      need(isStr(p.value) && optStr(p.unit) && isStr(p.label), "는 {value, unit?, label}");
+      break;
+    case "LIcon":
+      need((ICONS as readonly string[]).includes(p.icon) && isStr(p.title) && (p.lines === undefined || strList(p.lines, 0, 3)),
+        `는 {icon(${ICONS.join("|")}), title, lines?[0~3]}`);
+      break;
+    case "LCompare":
+      need(["left", "right"].every((k) => isObj(p[k]) && isStr(p[k].title) && strList(p[k].points, 1, 3))
+        && (p.winner === undefined || p.winner === "left" || p.winner === "right"),
+        "는 {left: {title, points[1~3]}, right: {…}, winner?: left|right}");
+      break;
+    case "LRecap":
+      need(isStr(p.title) && optStr(p.subtitle) && Array.isArray(p.items) && p.items.length >= 1 && p.items.length <= 7
+        && p.items.every((it: any) => isObj(it) && isStr(it.name) && optStr(it.note) && optStr(it.tag)),
+        "는 {title, subtitle?, items[1~7]: {name, note?, tag?}}");
+      break;
+    case "LOutro":
+      need(isStr(p.title) && optStr(p.subtitle), "는 {title, subtitle?}");
+      break;
     case "TitleReveal":
       if (!isStr(p.title)) e.push(`${where}: title 필요`);
       break;
@@ -114,11 +179,21 @@ export function validateTimeline(t: unknown): string[] {
         e.push(`${where}: media 는 {type: video, src: 작업 폴더 안 경로, durationInFrames: 양의 정수} 또는 {type: image, src: 작업 폴더 안 경로}`);
       }
     }
+    if (s?.section !== undefined) {
+      const sec = s.section;
+      if (!isObj(sec) || !SECTION_KINDS.includes(sec.kind) || (sec.index !== undefined && (!isInt(sec.index) || sec.index < 1))) {
+        e.push(`${where}: section 은 {kind: ${SECTION_KINDS.join("|")}, index?: 1 이상}`);
+      } else if (sec.kind === "item" && (!isInt(sec.index) || !isObj(t.tracker) || sec.index > (t.tracker.items?.length ?? 0))) {
+        e.push(`${where}: 항목 장면의 section.index 가 진행 표시(tracker) 밖이다`);
+      }
+    }
     const v = s?.visual;
     if (!isObj(v) || v.type !== "template") {
       e.push(`${where}: visual.type 은 template (생성 클립은 Phase 2)`);
     } else if (!(TEMPLATES as readonly string[]).includes(v.component)) {
       e.push(`${where}: 등록되지 않은 템플릿 ${v.component}`);
+    } else if ((LISTICLE_TEMPLATES as readonly string[]).includes(v.component) !== LISTICLE_THEMES.includes(t.theme)) {
+      e.push(`${where}: ${v.component} 는 테마 ${t.theme} 에서 쓸 수 없다 (목록형 장면 ↔ 목록형 테마 ${LISTICLE_THEMES.join("|")})`);
     } else {
       e.push(...checkProps(v.component, isObj(v.props) ? v.props : {}, where));
     }
@@ -140,6 +215,23 @@ export function validateTimeline(t: unknown): string[] {
     if (c.fromFrame < lastEnd) e.push(`자막 "${c.text}": 앞 자막과 겹친다`);
     if (c.toFrame > total) e.push(`자막 "${c.text}": 영상 끝을 넘는다`);
     lastEnd = c.toFrame;
+    if (c.words !== undefined) {
+      const ws: any[] = Array.isArray(c.words) ? c.words : [];
+      let prev = c.fromFrame;
+      const ok = ws.length > 0 && ws.every((w) => {
+        const good = isStr(w?.text) && isInt(w?.fromFrame) && w.fromFrame >= prev && w.fromFrame < c.toFrame
+          && (w.emphasis === undefined || typeof w.emphasis === "boolean");
+        prev = isInt(w?.fromFrame) ? w.fromFrame : prev;
+        return good;
+      });
+      if (!ok) e.push(`자막 "${c.text}": words 는 [{text, fromFrame(자막 안, 차례대로), emphasis?}]`);
+    }
+  }
+  if (t.tracker !== undefined) {
+    const items: any[] = isObj(t.tracker) && Array.isArray(t.tracker.items) ? t.tracker.items : [];
+    if (items.length < 1 || items.length > 7 || !items.every((it) => isObj(it) && isStr(it.name) && optStr(it.meta))) {
+      e.push("tracker 는 {items[1~7]: {name, meta?}}");
+    }
   }
   if (t.bgm !== null && t.bgm !== undefined) e.push("bgm 은 아직 지원하지 않는다 (null)");
   if (t.header !== undefined && (!isObj(t.header) || ["brand", "title"].some((k) => t.header[k] !== undefined && !isStr(t.header[k])))) {

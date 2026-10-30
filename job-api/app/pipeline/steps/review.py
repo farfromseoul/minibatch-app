@@ -62,12 +62,13 @@ class ReviewStep:
 
         numbered = "\n".join(f"{i}. {s}" for i, s in enumerate(sentences, start=1))
         news = job.get("news")
-        series_facts = ((job.get("series") or {}).get("bible") or {}).get("facts") or []  # 사용자가 준 참고 자료 (2026-10-30)
+        series_facts = (((job.get("series") or {}).get("bible") or {}).get("facts")
+                        or (job.get("listicle") or {}).get("facts") or [])  # 사용자가 준 참고 자료 (2026-10-30, 목록형 D42)
         if news:
             facts = ("\n원문 사실 목록(IT 뉴스, D40). 대본의 숫자·이름·날짜·주장이 이 목록과 다르거나 목록에 없으면 critical:\n"
                      + "\n".join(f"- {f}" for f in news["facts"]) + "\n")
         elif series_facts:
-            facts = ("\n시리즈 참고 자료에서 확인한 사실. 대본의 도구 이름·기능·숫자가 이와 다르면 critical:\n"
+            facts = ("\n참고 자료에서 확인한 사실. 대본의 도구 이름·기능·숫자가 이와 다르면 critical:\n"
                      + "\n".join(f"- {f}" for f in series_facts) + "\n")
         else:
             facts = ""

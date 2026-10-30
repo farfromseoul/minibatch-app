@@ -2,6 +2,7 @@ import React from "react";
 import { AbsoluteFill, Html5Audio, Img, Loop, OffthreadVideo, Sequence, useCurrentFrame } from "remotion";
 
 import { Subtitle } from "./layers/Subtitle";
+import { Listicle } from "./listicle/Listicle";
 import { fitFontSize, kenBurns, SAFE } from "./lib/layout";
 import { headerBrand, type Timeline } from "./lib/timeline";
 import { SCENES } from "./scenes";
@@ -10,7 +11,7 @@ import { type Theme, themeOf } from "./theme";
 
 // 쇼츠 한 편. timeline.json 하나와 음성 파일 주소(assetBase)만으로 그린다.
 // 시각은 timeline 단계가 정한 정수 프레임을 그대로 쓴다 (다시 계산하지 않는다, 앱 설계 "타임라인 계산").
-// 화면 틀은 theme 의 style 로 고른다: card(처음), keynote, letterbox (2026-10-17)
+// 화면 틀은 theme 의 style 로 고른다: card(처음), keynote, letterbox (2026-10-17), listicle (2026-10-30, D42)
 export type ShortProps = { timeline: Timeline; assetBase: string };
 
 /** 키노트 전체 화면에서 장면이 쓰는 영역 (자막 상자 위까지) */
@@ -116,6 +117,10 @@ const headerTitle = (t: Timeline): string => {
 
 export const Short: React.FC<ShortProps> = ({ timeline, assetBase }) => {
   const theme = themeOf(timeline.theme);
+
+  if (theme.style === "listicle") {
+    return <Listicle timeline={timeline} assetBase={assetBase} />;
+  }
 
   if (theme.style === "keynote") {
     return (

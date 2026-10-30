@@ -138,6 +138,10 @@ class ScriptStep:
     def run(self, ctx: StepContext) -> None:
         job = ctx.read_json("job.json")
         cat = load_category(ctx.settings, job["category"])
+        if job.get("format") == "listicle":  # 목록형 쇼츠 (D42)
+            from .listicle import run_script
+            run_script(ctx, job, cat, _review_feedback(ctx))
+            return
         rules = cat.get("script", {})
         max_sentence = int(rules.get("max_sentence_chars", 40))
         series = job.get("series")

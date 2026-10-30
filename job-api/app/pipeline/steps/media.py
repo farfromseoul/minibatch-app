@@ -85,12 +85,18 @@ class TimelineStep:
 
     def run(self, ctx: StepContext) -> None:
         job = ctx.read_json("job.json")
-        t = compute_timeline(ctx.read_json("scenes.json"), ctx.read_json("tts.json"), fps=job["fps"],
-                             width=job["resolution"]["width"], height=job["resolution"]["height"], theme=job["theme"])
+        scenes, tts = ctx.read_json("scenes.json"), ctx.read_json("tts.json")
+        phrases = None
+        if job.get("format") == "listicle":  # 목록형(D42): 문장 음성의 쉼에 맞춰 구절·단어 자막
+            from .listicle import phrases_for
+            phrases = phrases_for(ctx, scenes, tts)
+        t = compute_timeline(scenes, tts, fps=job["fps"], width=job["resolution"]["width"], height=job["resolution"]["height"],
+                             theme=job["theme"], phrases=phrases)
         seconds = t["durationInFrames"] / job["fps"]
         target = job["targetDurationSec"]
-        if not target - 5 <= seconds <= target + 5:  # 55~65초 (기획서 성공 기준 1). 대본 길이로 맞춘다 (앱 설계 "길이 맞추기")
-            raise StepFailure("deterministic", f"영상 길이 {seconds:.1f}초가 {target - 5}~{target + 5}초 밖이다", retry_from="script")
+        tol = int(job.get("durationToleranceSec") or 5)
+        if not target - tol <= seconds <= target + tol:  # 55~65초 (기획서 성공 기준 1), 목록형 37~53초. 대본 길이로 맞춘다 (앱 설계 "길이 맞추기")
+            raise StepFailure("deterministic", f"영상 길이 {seconds:.1f}초가 {target - tol}~{target + tol}초 밖이다", retry_from="script")
         ctx.write_json("timeline.json", t)
 
 
