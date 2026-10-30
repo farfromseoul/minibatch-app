@@ -360,3 +360,23 @@ class BackgroundNewsTest(NewsCase):
         self.assertEqual(len(started), 1)  # 평가는 따로 맡겼고
         self.assertEqual(self.get(f"/jobs/{job_id}").json()["status"], "APPROVED")  # 그동안 버튼은 처리됐다
         self.assertIn("모으는 중", " ".join(m["text"] for m in self.tg.sent("sendMessage")))
+
+
+class FeedRedirectTest(NewsCase):
+    """2026-10-30 실제: GeekNews 가 RSS 를 FeedBurner 로 옮겨(302) '/news' 가 'RSS 를 읽지 못했다' 로 끝났다"""
+
+    def test_feed_redirect_is_followed(self):
+        self.three()
+        feed = self.web.pages.pop("https://news.hada.io/rss/news")
+        self.web.pages["https://feeds.feedburner.com/geeknews-feed"] = feed
+
+        def transport(request):
+            if str(request.url) == "https://news.hada.io/rss/news":
+                return httpx.Response(302, headers={"location": "https://feeds.feedburner.com/geeknews-feed"})
+            return self.web(request)
+        self.app.state.news.http = httpx.Client(transport=httpx.MockTransport(transport))
+        self.llm.responses = [evaluation(9), evaluation(6)]
+
+        self.daily()
+
+        self.assertEqual(len(self.candidates()), 2)

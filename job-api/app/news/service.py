@@ -14,6 +14,7 @@ import threading
 import time
 from datetime import timedelta
 from typing import Any, Callable, Optional
+from urllib.parse import urljoin
 
 import httpx
 from sqlalchemy import func, select
@@ -56,12 +57,25 @@ class NewsService:
     # ---------- 읽기
 
     def _get(self, url: str) -> Optional[str]:
-        try:
-            res = self.http.get(url, headers={"User-Agent": article.UA}, timeout=20)
-        except httpx.HTTPError as e:
-            log.warning("GeekNews 읽기 실패 %s: %s", url, type(e).__name__)
-            return None
-        return res.text if res.status_code == 200 else None
+        """GeekNews RSS·글 페이지. 리디렉션은 따라가되 한 단계씩 원문 읽기와 같은 주소 검사를 한다
+        (2026-10-30: RSS 가 FeedBurner 로 302 리디렉션돼 '읽지 못했다'로 끝났다)"""
+        for _ in range(article.MAX_REDIRECTS + 1):
+            if not article.safe_url(url, self.resolve):
+                log.warning("GeekNews 주소 검사에서 거절: %s", url)
+                return None
+            try:
+                res = self.http.get(url, headers={"User-Agent": article.UA}, timeout=20, follow_redirects=False)
+            except httpx.HTTPError as e:
+                log.warning("GeekNews 읽기 실패 %s: %s", url, type(e).__name__)
+                return None
+            if res.status_code in (301, 302, 303, 307, 308) and res.headers.get("location"):
+                url = urljoin(url, res.headers["location"])
+                continue
+            if res.status_code != 200:
+                log.warning("GeekNews 읽기 실패 %s: %s", url, res.status_code)
+                return None
+            return res.text
+        return None
 
     def fetch_article(self, url: Optional[str]) -> Optional[str]:
         return article.fetch_text(url, self.http, self.resolve) if url else None
