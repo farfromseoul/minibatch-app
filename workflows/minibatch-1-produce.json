@@ -34,6 +34,25 @@
     },
     {
       "parameters": {
+        "httpMethod": "POST",
+        "path": "minibatch-produce-now",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "e458c183-6cff-5dca-a648-640a281bd256",
+      "name": "지금 생산 (텔레그램 /run)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        -200
+      ],
+      "webhookId": "19b76752-90d2-522f-96c9-7f42a783f227",
+      "notes": "POST /webhook/minibatch-produce-now: job-api 가 텔레그램 /run 을 받으면 부른다",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
         "jsCode": "// 설정: 여기 한 곳만 고친다. 텔레그램 chat id 는 비밀 값이 아니다 (봇 토큰은 자격 증명 'MiniBatch 텔레그램' 에)\nreturn [{ json: {\n  api: 'http://job-api:8080',                 // compose 안의 job-api 주소\n  chatId: 'CHAT_ID_를_여기에',                 // 25번 ③에서 확인한 내 chat id (숫자)\n  formBase: 'http://localhost:5678/form',     // 승인 폼 주소 (이 MacBook 브라우저에서 연다)\n  category: 'ai-it',\n} }];"
       },
       "id": "57fed4ac-e48d-5a25-929c-a5cf2306fb79",
@@ -470,7 +489,7 @@
     },
     {
       "parameters": {
-        "content": "## 1. 생산 (하루 10편)\n**언제**: 매일 06~23시 매시 정각 (수동 실행도 됨)\n**하는 일**: ① job-api 에 '이어 할 작업'을 묻고, 없으면 새 작업(진행 중 시리즈의 다음 화, 없으면 단독 주제)을 만든다 ② 그 작업을 주제→대본→대본 검토→장면→음성→타임라인→소재→렌더→품질 검사→업로드 순서로 한 단계씩 요청한다 ③ 업로드가 끝나면 job-api 가 텔레그램으로 [승인(공개)][반려] 를 보낸다(이 워크플로는 다음 작업으로)\n**막히면**: 업로드 한도·앞 화 업로드 대기는 그 작업을 두고 다음 작업으로 넘어간다. 실패는 텔레그램 '⚠️ MiniBatch 실패'\n**지금 상태 보기**: 0번 현황 폼, 텔레그램 /status (화별: 아직 안 만듦·만드는 중·한도 대기·검토 대기·공개)",
+        "content": "## 1. 생산 (하루 10편)\n**언제**: 매일 06~23시 매시 정각, 텔레그램 /run (job-api 가 이미 돌고 있으면 막는다), 수동 실행\n**하는 일**: ① job-api 에 '이어 할 작업'을 묻고, 없으면 새 작업(진행 중 시리즈의 다음 화, 없으면 단독 주제)을 만든다 ② 그 작업을 주제→대본→대본 검토→장면→음성→타임라인→소재→렌더→품질 검사→업로드 순서로 한 단계씩 요청한다 ③ 업로드가 끝나면 job-api 가 텔레그램으로 [승인(공개)][반려] 를 보낸다(이 워크플로는 다음 작업으로)\n**막히면**: 업로드 한도·앞 화 업로드 대기는 그 작업을 두고 다음 작업으로 넘어간다. 실패는 텔레그램 '⚠️ MiniBatch 실패'\n**지금 상태 보기**: 0번 현황 폼, 텔레그램 /status (화별: 아직 안 만듦·만드는 중·한도 대기·검토 대기·공개)",
         "width": 760,
         "height": 168,
         "color": 5
@@ -481,7 +500,7 @@
       "typeVersion": 1,
       "position": [
         0,
-        -388
+        -428
       ]
     }
   ],
@@ -498,6 +517,17 @@
       ]
     },
     "수동 실행": {
+      "main": [
+        [
+          {
+            "node": "설정",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "지금 생산 (텔레그램 /run)": {
       "main": [
         [
           {

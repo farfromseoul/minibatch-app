@@ -50,6 +50,7 @@ HELP = """🤖 MiniBatch 명령
    다음 줄에 (선택) 참고 자료 주소(http…, 5개까지) · 항목 이름('1.' 또는 '-' 로 시작, 주면 그 개수)
    예) /top 클로드 코드에서 진짜 쓸 기능, 5
        https://docs.anthropic.com/claude-code
+/run — 지금 생산 (정각을 기다리지 않고 n8n 1번 실행. 이미 돌고 있으면 알려 줌)
 /help — 이 도움말
 
 버튼
@@ -62,7 +63,7 @@ HELP = """🤖 MiniBatch 명령
 · ASMR: [업로드 승인] [공개 승인] [버리기]
 
 자동으로 하는 일
-· 생산: 06~23시 매시 정각 (n8n 1번)
+· 생산: 06~23시 매시 정각 (n8n 1번), 언제든 /run
 · IT 뉴스 후보: 매일 07:00 (n8n 7번)
 · 다음 시리즈 주제 질문: 남은 화가 적으면 하루 한 번 (n8n 3번)
 · ASMR inbox 확인: 매시 정각 (n8n 6번)
@@ -131,6 +132,7 @@ class TelegramApprovals:
         self.runner = self.providers = None  # 계획 생성에 쓴다. 서버가 만든 뒤 attach 로 넣는다
         self.asmr = None  # ASMR 채널 버튼(ua·up·ux, D38). 서버가 만든 뒤 넣는다
         self.news = None  # IT 뉴스 후보·[이걸로](n:, D40). 서버가 만든 뒤 넣는다
+        self.production = None  # /run: n8n 1번 지금 생산 (2026-10-31). 서버가 만든 뒤 넣는다
         # 몇 분 걸리는 일(/news 평가)을 받기 루프 밖에서 돌린다. 그동안에도 버튼·다시 알림이 처리된다 (2026-10-26)
         self.run_background: Callable[[Callable[[], None]], None] = (
             lambda fn: threading.Thread(target=fn, name="news", daemon=True).start())
@@ -341,6 +343,9 @@ class TelegramApprovals:
             return
         if cmd == "/news":
             self._news_command(text.split(" ", 1)[1].strip() if " " in text else "")
+            return
+        if cmd == "/run":
+            self._safe_send(self.production.run()["message"] if self.production else "생산 시작 기능이 꺼져 있습니다", None)
             return
         if cmd == "/top":
             self._top_command(re.split(r"\s", text, maxsplit=1)[1] if re.search(r"\s", text) else "")

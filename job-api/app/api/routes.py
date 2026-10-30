@@ -266,8 +266,15 @@ def list_jobs(request: Request, status: Optional[str] = Query(default=None)) -> 
         return {"items": [job_summary(j) for j in s.scalars(q)]}
 
 
+@api.post("/produce/run")
+def produce_run(request: Request) -> dict[str, Any]:
+    """지금 생산: n8n 1번 웹훅을 부른다(텔레그램 /run 과 같다). 이미 돌고 있으면 started=false (2026-10-31)"""
+    return _st(request).production.run()
+
+
 @api.get("/jobs/next")
 def get_next_job(request: Request) -> dict[str, Any]:
+    _st(request).production.touch()  # 1번 워크플로가 다녀감 (/run 겹침 막기)
     """이어 할 작업 (D31). /jobs/{job_id} 보다 먼저 선언해야 'next' 가 작업 ID 로 잡히지 않는다"""
     st = _st(request)
     with st.db() as s:
@@ -292,6 +299,7 @@ def get_job(job_id: str, request: Request) -> dict[str, Any]:
 
 @api.post("/jobs/{job_id}/steps/{step}")
 def post_step(job_id: str, step: str, body: StepBody, request: Request):
+    _st(request).production.touch()  # 1번 워크플로가 다녀감 (/run 겹침 막기)
     st = _st(request)
     if body.resumeUrl and not body.resumeUrl.startswith(st.settings.resume_url_prefix):
         raise ApiError(422, "invalid_request", f"resumeUrl 은 {st.settings.resume_url_prefix} 로 시작해야 한다")
@@ -306,6 +314,7 @@ def get_step(job_id: str, step: str, request: Request) -> dict[str, Any]:
 
 @api.post("/jobs/{job_id}/reset")
 def reset(job_id: str, request: Request, from_: str = Query(alias="from")) -> dict[str, Any]:
+    _st(request).production.touch()  # 1번 워크플로가 다녀감 (/run 겹침 막기)
     return _st(request).runner.reset(job_id, from_)
 
 

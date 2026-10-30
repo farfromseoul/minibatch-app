@@ -19,6 +19,7 @@ from app.core.config import Settings
 from app.core.timeutil import utcnow
 from app.db.migrate import upgrade
 from app.db.session import make_engine, make_sessionmaker
+from app.domain.production import Production
 from app.media.ffmpeg import probe_video
 from app.news.service import NewsService
 from app.pipeline.pipeline import PIPELINE
@@ -81,6 +82,12 @@ def create_app(settings: Optional[Settings] = None, *, steps: Optional[dict] = N
                                          **(steps or {})},  # 넘겨준 단계가 기본을 덮는다
                                   executor=executor, notify=notify, clock=clock,
                                   on_review=app.state.telegram.notify_review if app.state.telegram else None)
+        runner = app.state.runner
+        # 텔레그램 /run (2026-10-31): 단계가 실행 중이면(전역 잠금) 그 작업을 알려 겹쳐 시작하지 않는다
+        app.state.production = Production(url=s.produce_webhook_url, clock=clock,
+                                          runner_busy=lambda: runner._running_job if runner._lock.locked() else None)
+        if app.state.telegram is not None:
+            app.state.telegram.production = app.state.production
         if app.state.telegram is not None:  # 텔레그램으로 받은 주제로 계획을 만들 때 쓴다 (D37)
             app.state.telegram.attach(app.state.runner, registry)
         # ASMR 채널 (D38): MiniBatch 와 다른 인증 파일로 올린다. 인증 파일은 올릴 때 읽는다(없어도 서버는 뜬다)

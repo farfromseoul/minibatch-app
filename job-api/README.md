@@ -66,6 +66,7 @@ tests/                  # 단위 테스트 (unittest)
 | POST | `/series` `{episodeCount, key?, title?}` (계획 없이) | LLM 이 설정(bible)·화별 계획을 만들어 PROPOSED. title 이 없으면 LLM 이 예전 시리즈와 겹치지 않는 제목도 정하고, key 가 없으면 `s<한국 날짜>-<순번>` |
 | POST | `/series/{id}/approve` `{approvedBy, episodes?, bible?}` | 승인 대기 시리즈 승인 (고친 계획 반영) |
 | POST | `/listicle` `{topic, count?(3~5), references?[http(s), 5개], items?[3~5]}` | 목록형 쇼츠 작업(D42). 텔레그램 `/top` 과 같다. `/jobs/next` 는 IT 뉴스 → 목록형 → 나머지 순 |
+| POST | `/produce/run` | 지금 생산(D43): n8n 1번 웹훅(`MINIBATCH_PRODUCE_WEBHOOK_URL`)을 부른다. 텔레그램 `/run` 과 같다. 단계 실행 중이거나 90초 안에 `/jobs/next`·단계·되돌리기 요청이 있었으면 `{started: false}` |
 
 ## LLM 단계 (script · review · scenes)
 

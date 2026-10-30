@@ -119,8 +119,9 @@ def form_done(wf, name, title, message, pos):
 
 
 # ---------------------------------------------------------------- 설명 (2026-10-20 사용자: 워크플로마다 용도와 노드 역할이 보이게)
-ABOUT1 = "## 1. 생산 (하루 10편)\n**언제**: 매일 06~23시 매시 정각 (수동 실행도 됨)\n**하는 일**: ① job-api 에 '이어 할 작업'을 묻고, 없으면 새 작업(진행 중 시리즈의 다음 화, 없으면 단독 주제)을 만든다 ② 그 작업을 주제→대본→대본 검토→장면→음성→타임라인→소재→렌더→품질 검사→업로드 순서로 한 단계씩 요청한다 ③ 업로드가 끝나면 job-api 가 텔레그램으로 [승인(공개)][반려] 를 보낸다(이 워크플로는 다음 작업으로)\n**막히면**: 업로드 한도·앞 화 업로드 대기는 그 작업을 두고 다음 작업으로 넘어간다. 실패는 텔레그램 '⚠️ MiniBatch 실패'\n**지금 상태 보기**: 0번 현황 폼, 텔레그램 /status (화별: 아직 안 만듦·만드는 중·한도 대기·검토 대기·공개)"
+ABOUT1 = "## 1. 생산 (하루 10편)\n**언제**: 매일 06~23시 매시 정각, 텔레그램 /run (job-api 가 이미 돌고 있으면 막는다), 수동 실행\n**하는 일**: ① job-api 에 '이어 할 작업'을 묻고, 없으면 새 작업(진행 중 시리즈의 다음 화, 없으면 단독 주제)을 만든다 ② 그 작업을 주제→대본→대본 검토→장면→음성→타임라인→소재→렌더→품질 검사→업로드 순서로 한 단계씩 요청한다 ③ 업로드가 끝나면 job-api 가 텔레그램으로 [승인(공개)][반려] 를 보낸다(이 워크플로는 다음 작업으로)\n**막히면**: 업로드 한도·앞 화 업로드 대기는 그 작업을 두고 다음 작업으로 넘어간다. 실패는 텔레그램 '⚠️ MiniBatch 실패'\n**지금 상태 보기**: 0번 현황 폼, 텔레그램 /status (화별: 아직 안 만듦·만드는 중·한도 대기·검토 대기·공개)"
 NOTES1 = {
+    '지금 생산 (텔레그램 /run)': 'POST /webhook/minibatch-produce-now: job-api 가 텔레그램 /run 을 받으면 부른다',
     '설정': 'job-api 주소·chat id·카테고리. 여기 한 곳만 고친다',
     '단계 순서': 'GET /pipeline: 단계 이름 순서',
     '이어 할 작업': 'GET /jobs/next: 끝나지 않았고 기다릴 이유가 없는 작업 하나',
@@ -206,6 +207,10 @@ w.save("minibatch-0-status.json", about="""## 0. 현황 보기
 w = WF("MiniBatch 1 생산 (하루 10편)")
 t1 = cron(w, "매일 06시 몰아서, 07~23시 매시 이어서", ["0 0 6-23 * * *"], [0, 0])
 t2 = manual(w, [0, 200])
+# 텔레그램 /run (2026-10-31): job-api 가 내부망으로 부른다(n8n 포트는 맥미니 127.0.0.1 에만 열려 있다). 겹침 검사는 job-api 가 한다
+t3 = w.add("지금 생산 (텔레그램 /run)", "n8n-nodes-base.webhook", 2,
+           {"httpMethod": "POST", "path": "minibatch-produce-now", "responseMode": "onReceived", "options": {}},
+           [0, -200], webhookId=str(uuid.uuid5(uuid.NAMESPACE_URL, "minibatch/minibatch-produce-now")))
 cfg = code(w, "설정", CONFIG_JS, [220, 100])
 pipe = http(w, "단계 순서", "GET", "={{ $('설정').first().json.api }}/pipeline", [440, 100])
 # 이어 할 작업은 job-api 가 정한다 (D31): 끝나지 않은 작업 중 기다릴 이유(업로드 한도, 앞 화 업로드 전)가 없는 것. 없으면 새 작업
@@ -242,7 +247,7 @@ sw3 = switch(w, "요청 종류", "={{ ({ run: 0, reset: 1 })[$json.action] ?? 2 
 req = http(w, "단계 요청", "POST", "={{ $('설정').first().json.api }}/jobs/{{ $json.jobId }}/steps/{{ $json.step }}",
            [3520, 260], body="={}")
 rst = http(w, "되돌리기", "POST", "={{ $('설정').first().json.api }}/jobs/{{ $json.jobId }}/reset?from={{ $json.from }}", [3520, 440])
-for a, b in [(t1, cfg), (t2, cfg), (cfg, pipe), (pipe, jobs), (jobs, sw0), (new, newr), (newr, sw1),
+for a, b in [(t1, cfg), (t2, cfg), (t3, cfg), (cfg, pipe), (pipe, jobs), (jobs, sw0), (new, newr), (newr, sw1),
              (fix, st), (st, dec), (dec, sw2), (nxt, jobs), (wt, sw3), (req, st), (rst, st)]:
     w.link(a, b)
 w.link(sw0, fix, 0); w.link(sw0, new, 1)
