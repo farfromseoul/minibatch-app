@@ -20,14 +20,16 @@ class FakeEngine:
     def __init__(self, fail_on=None):
         self.calls = []
         self.voices_used = []
+        self.speeds = []
         self.fail_on = fail_on
 
     def has_voice(self, voice):
         return voice in self.voices
 
-    def synthesize(self, text, out_path, voice=None):
+    def synthesize(self, text, out_path, voice=None, speed=None):
         self.calls.append(text)
         self.voices_used.append(voice)
+        self.speeds.append(speed)
         if self.fail_on and self.fail_on in text:
             raise RuntimeError("합성 실패")
         frames = int(self.sample_rate * 0.1 * len(text))
@@ -113,6 +115,23 @@ class SynthesizeTest(ApiTestBase):
 
         self.assertEqual(res.status_code, 200)
         self.assertEqual(self.engine.voices_used, ["F1", "F1"])
+
+    def test_speed_is_passed_to_engine(self):
+        # 목록형 쇼츠(D42, 2026-10-31): 기본 1.05배가 빠르게 들려 카테고리가 느리게 정한다
+        res = self.client.post("/synthesize", json=self.body(speed=0.9))
+
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(self.engine.speeds, [0.9, 0.9])
+
+    def test_without_speed_engine_default_is_used(self):
+        self.client.post("/synthesize", json=self.body())
+
+        self.assertEqual(self.engine.speeds, [None, None])
+
+    def test_speed_out_of_range_is_422(self):
+        for v in (0.5, 1.6):
+            self.assertEqual(self.client.post("/synthesize", json=self.body(speed=v)).status_code, 422, v)
+        self.assertEqual(self.engine.calls, [])
 
     def test_without_voice_engine_default_is_used(self):
         self.client.post("/synthesize", json=self.body())

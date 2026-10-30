@@ -26,7 +26,7 @@ NAMES = ["find-skills", "superpowers", "claude-mem"]
 
 def fill(prefix: str, n: int) -> str:
     """앞부분이 prefix 이고 공백 빼고 n 글자쯤인 문장 (괄호 강조 하나)"""
-    body = prefix + " " + "나" * max(0, n - len(prefix.replace(" ", "")) - 3) + " [핵심]"
+    body = prefix + " " + "나" * max(0, n - len(prefix.replace(" ", "")) - 6) + " [핵심]이에요"
     return body
 
 
@@ -43,14 +43,10 @@ def reply(names=NAMES, per=15, claim="수백 가지"):
             "titleCandidates": ["a", "b", "c"], "hashtags": ["#AI"]}
 
 
-VISUALS = {"items": [
-    {"visuals": [{"component": "LChat", "props": {"prompt": "PDF 표를 엑셀로", "results": ["pdf-to-xlsx", "table-extract"]}},
-                 {"component": "LTerminal", "props": {"command": "npx skills add x", "output": ["설치 완료"]}}]},
-    {"visuals": [{"component": "LSteps", "props": {"steps": ["계획", "코드", "검증"]}},
-                 {"component": "LCompare", "props": {"left": {"title": "그냥", "points": ["바로 코드"]},
-                                                      "right": {"title": "계획 먼저", "points": ["덜 헤맨다"]}, "winner": "right"}}]},
-    {"visuals": [{"component": "LIcon", "props": {"icon": "memory", "title": "세션 넘어 기억"}},
-                 {"component": "LRocket", "props": {}}]},  # 없는 그림 → 이 항목만 대체
+VISUALS = {"items": [  # 항목마다 그림 한 장 (2026-10-31)
+    {"visuals": [{"component": "LChat", "props": {"prompt": "PDF 표를 엑셀로", "results": ["pdf-to-xlsx", "table-extract"]}}]},
+    {"visuals": [{"component": "LSteps", "props": {"steps": ["계획", "코드", "검증"]}}]},
+    {"visuals": [{"component": "LRocket", "props": {}}]},  # 없는 그림 → 이 항목만 아이콘 장면으로
 ]}
 
 
@@ -136,6 +132,16 @@ class ScriptRulesTest(unittest.TestCase):
         d["items"][1]["lines"][0] = "두 번째 [도구]를 볼게요"
         self.assertTrue(any("이름" in p for p in self.check(d)))
 
+    def test_fragment_sentence_is_rejected(self):
+        d = reply()
+        d["hook"][0] = "클로드 스킬이 [10만 개가] 넘는다는데"
+        self.assertTrue(any("조각 문장" in p for p in self.check(d)))
+
+    def test_first_item_line_needs_intro(self):
+        d = reply(names=["pdf", "superpowers", "claude-mem"])
+        d["items"][0]["lines"][0] = "첫째는 [pdf]예요"  # 2026-10-31 실제: 카드가 1.6초만 보였다
+        self.assertTrue(any("한 줄 소개" in p for p in self.check(d)))
+
     def test_pack_splits_emphasis_and_keeps_compat_fields(self):
         data = ls._pack(reply())
         first = data["listicle"]["items"][0]["lines"][0]
@@ -154,7 +160,7 @@ class ScriptRulesTest(unittest.TestCase):
 class ScenesBuildTest(unittest.TestCase):
     def test_frame_is_built_by_code_and_props_are_valid(self):
         lst = ls._pack(reply())["listicle"]
-        picks = [v["visuals"] for v in VISUALS["items"][:2]] + [[ls._fallback(lst["items"][2])] * 2]
+        picks = [v["visuals"] for v in VISUALS["items"][:2]] + [[ls._fallback(lst["items"][2])]]
         scenes = ls.build_scenes(lst, picks, {"line": "저장해 두고 하나씩 써 보세요.", "title": "저장", "subtitle": ""})
 
         comps = [s["visual"]["component"] for s in scenes]
@@ -166,8 +172,9 @@ class ScenesBuildTest(unittest.TestCase):
             self.assertEqual(len(s["emphasis"]), len(s["lines"]))
         items = [s for s in scenes if s["section"]["kind"] == "item"]
         self.assertEqual(sorted({s["section"]["index"] for s in items}), [1, 2, 3])
-        # 항목 문장 3개: 소개 카드 1 + 그림 두 장이 1·1
-        self.assertEqual([len(s["lines"]) for s in items[:3]], [1, 1, 1])
+        # 항목 문장 3개: 소개 카드 1 + 그림 한 장이 설명 2문장 (장면이 5~7초 머문다, 2026-10-31)
+        self.assertEqual([len(s["lines"]) for s in items[:2]], [1, 2])
+        self.assertEqual(len(items), 6)
         hook = scenes[1]["visual"]["props"]
         self.assertEqual((hook["count"], hook["highlight"]), (3, "3개"))
 
@@ -175,7 +182,7 @@ class ScenesBuildTest(unittest.TestCase):
         items = ls._pack(reply())["listicle"]["items"]
         problems = ls.check_visuals(VISUALS, items)
         self.assertTrue(any("LRocket" in p for p in problems))
-        same = {"items": [{"visuals": [{"component": "LIcon", "props": {"icon": "bolt", "title": "x"}}] * 2}] * 3}
+        same = {"items": [{"visuals": [{"component": "LIcon", "props": {"icon": "bolt", "title": "x"}}]}] * 3}
         self.assertTrue(any("두 번까지" in p for p in ls.check_visuals(same, items)))
 
 
@@ -188,7 +195,7 @@ class TimelinePhrasesTest(unittest.TestCase):
         tts = {"items": [{"id": "s01-01", "scene": "s01", "text": scenes["scenes"][0]["lines"][0], "path": "tts/x.wav", "seconds": 2.4}]}
         phrases = {"s01-01": al.align(tts["items"][0]["text"], 2.4, None, "스킬을")}
 
-        t = compute_timeline(scenes, tts, fps=30, width=1080, height=1920, theme="gold", phrases=phrases)
+        t = compute_timeline(scenes, tts, fps=30, width=1080, height=1920, theme="nova", phrases=phrases)
 
         self.assertEqual(t["tracker"], scenes["tracker"])
         self.assertEqual(t["scenes"][0]["section"], {"kind": "item", "index": 1})
@@ -202,6 +209,28 @@ class TimelinePhrasesTest(unittest.TestCase):
         self.assertTrue(any(w.get("emphasis") for c in t["captions"] for w in c["words"]))
 
 
+class PacingTest(unittest.TestCase):
+    """문장 앞뒤 무음을 잘라 문장 사이를 일정한 쉼으로 (2026-10-31: 무음 1.3초로 끊겨 들렸다)"""
+
+    def test_speech_spans_set_gaps_and_audio_starts_early(self):
+        scenes = {"scenes": [{"id": "s01", "lines": ["가나다라마바사", "아자차카타파하"], "visual": {"type": "template", "component": "LIcon",
+                                                                                        "props": {"icon": "bolt", "title": "x"}},
+                              "animationPreset": "pop", "padAfterSec": 0.4}]}
+        tts = {"items": [{"id": f"s01-0{i}", "scene": "s01", "text": t, "path": f"tts/{i}.wav", "seconds": 2.6}
+                         for i, t in ((1, "가나다라마바사"), (2, "아자차카타파하"))]}
+        spans = {"s01-01": (0.6, 1.95), "s01-02": (0.6, 1.95)}
+
+        t = compute_timeline(scenes, tts, fps=30, width=1080, height=1920, theme="nova", spans=spans,
+                             pacing={"lead": 0.6, "gap": 0.3, "tail": 0.1, "hold": 0.6})
+
+        a1, a2 = (a["fromFrame"] for a in t["audio"])
+        self.assertEqual(a1, 0)                      # 말 시작(0.6초)에 맞춰 파일을 0초에
+        self.assertAlmostEqual(a2, (0.6 + 1.35 + 0.1 + 0.3 - 0.6) * 30, delta=1)  # 앞 말 끝 + 꼬리 + 쉼 − 앞 무음
+        self.assertAlmostEqual(t["durationInFrames"], (0.6 + 1.45 + 0.3 + 1.45 + 0.4) * 30, delta=1)
+        c1, c2 = t["captions"]
+        self.assertEqual(c1["toFrame"], c2["fromFrame"])  # 짧은 쉼에는 앞 자막을 남긴다
+
+
 class ListicleCase(TelegramCase, MediaCase):
     pipeline = ["topic", "script", "review", "scenes", "tts", "timeline"]
 
@@ -210,7 +239,7 @@ class ListicleCase(TelegramCase, MediaCase):
         super().setUp()
         for f in ("listicle.yaml", "it-news.yaml"):
             shutil.copy(CATS / f, self.settings.content_dir / "categories" / f)
-        FakeWorker.seconds = 2.4
+        FakeWorker.seconds = 3.1  # 3개 항목 15문장 → 약 55초
 
     def make_providers(self):
         return FakeRegistry(self.llm, tts_url=self.url)
@@ -264,7 +293,7 @@ class TopCommandTest(ListicleCase):
 class ListicleProductionTest(ListicleCase):
     def test_chain_to_timeline_has_tracker_sections_and_word_captions(self):
         job_id = self.post("/listicle", {"topic": "클로드 스킬", "count": 3}).json()["id"]
-        target = ls.target_chars(45, 5.6, 3, len("저장해두고하나씩써보세요."))
+        target = ls.target_chars(58, 6.3, 3, len("저장해두고하나씩써보세요."))
         per = max(8, round(target / 14))
         self.llm.responses = [reply(per=per), {"issues": [], "scores": GOOD_SCORES, "verdict": "pass"}, VISUALS, VISUALS, VISUALS]
 
@@ -276,7 +305,7 @@ class ListicleProductionTest(ListicleCase):
 
         job = self.read(job_id, "job.json")
         self.assertEqual((job["format"], job["targetDurationSec"], job["durationToleranceSec"], job["theme"]),
-                         ("listicle", 45, 8, "gold"))
+                         ("listicle", 58, 6, "nova"))
         prompt = [r for r in self.llm.requests if r["schema_name"] == "listicle_script"][0]["messages"][-1]["content"]
         self.assertIn("항목 수 N: 3", prompt)
         t = self.read(job_id, "timeline.json")
@@ -286,7 +315,10 @@ class ListicleProductionTest(ListicleCase):
         self.assertIn("LIcon", comps)  # 3번 항목의 없는 그림은 아이콘 장면으로
         self.assertEqual(comps[-1], "LOutro")
         self.assertTrue(all("words" in c for c in t["captions"]))
-        self.assertTrue(37 <= t["durationInFrames"] / 30 <= 53, t["durationInFrames"] / 30)
+        self.assertTrue(52 <= t["durationInFrames"] / 30 <= 64, t["durationInFrames"] / 30)
+        tts = self.read(job_id, "tts.json")
+        self.assertEqual(tts["speed"], 0.93)
+        self.assertEqual([b.get("speed") for p, b in FakeWorker.received if p == "/synthesize"], [0.93])
         run = self.get(f"/jobs/{job_id}/steps/scenes").json()
         self.assertIn("아이콘", json.dumps(run, ensure_ascii=False))
 
@@ -312,11 +344,11 @@ class ListicleQcTest(unittest.TestCase):
         case.setUp()
         try:
             shutil.copy(CATS / "listicle.yaml", case.settings.content_dir / "categories" / "listicle.yaml")
-            case.analysis = good_analysis(durationSec=51.0)
+            case.analysis = good_analysis(durationSec=63.0)
             job_id = case.post("/listicle", {"topic": "터미널 도구", "count": 3}).json()["id"]
             case.run_until(job_id, "qc")
             qc = case.read(job_id, "qc.json")
             length = next(c for c in qc["checks"] if c["name"] == "length")
-            self.assertEqual((length["ok"], length["expected"]), (True, "37~53초"))
+            self.assertEqual((length["ok"], length["expected"]), (True, "52~64초"))
         finally:
             case.tearDown()

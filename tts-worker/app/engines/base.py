@@ -12,6 +12,6 @@ class Engine(Protocol):
 
     def has_voice(self, voice: str) -> bool: ...
 
-    def synthesize(self, text: str, out_path: Path, voice: Optional[str] = None) -> float:
-        """voice 가 없으면 엔진 기본 목소리 (MINIBATCH_TTS_VOICE)"""
+    def synthesize(self, text: str, out_path: Path, voice: Optional[str] = None, speed: Optional[float] = None) -> float:
+        """voice 가 없으면 엔진 기본 목소리 (MINIBATCH_TTS_VOICE), speed 가 없으면 엔진 기본 빠르기"""
         ...

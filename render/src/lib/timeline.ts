@@ -45,7 +45,7 @@ export const ICONS = ["search", "memory", "shield", "bolt", "clock", "code", "ch
   "chart", "sparkles", "book", "gear"] as const;
 const SECTION_KINDS = ["hook", "item", "recap", "outro"];
 /** 목록형 장면은 목록형 테마에서만 그린다 (다른 스타일의 장면 등록부에는 없다) */
-export const LISTICLE_THEMES = ["gold"];
+export const LISTICLE_THEMES = ["nova"];
 export const PRESETS: AnimationPreset[] = ["pop", "fade", "sequential", "draw"];
 export const MAX_FLOW_NODES = 6;
 

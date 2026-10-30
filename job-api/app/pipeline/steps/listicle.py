@@ -14,7 +14,7 @@ import zlib
 from typing import Any
 
 from app.llm.prompting import render_messages
-from app.media.align import align
+from app.media.align import align, analyze, read_pcm16
 from app.schemas.templates import DETAIL_VISUALS, TEMPLATES, check_props
 from app.text.sentences import count_chars, repeated_sentences
 
@@ -24,18 +24,27 @@ from .llm_common import ask, meta_of
 LENGTH_TAG = "글자 수"
 TOLERANCE = 0.15       # 목록형은 문장을 빼서 맞추지 않는다(항목 구조). 넉넉히 두고 timeline 이 실제 길이로 다시 판정
 MIN_CHARS = 6
-LEAD_SEC, PAD_SEC, GAP_SEC = 0.2, 0.15, 0.15  # timeline_calc 의 앞 여백·문장 간격, 목록형 장면 뒤 여백
+FIRST_MIN = 12         # 항목 첫 문장(이름 + 한 줄 소개). '첫째는 pdf예요'(8자)는 카드가 1.6초만 보였다
+# 목록형 쉼 (2026-10-31: 장면이 2~4초마다 바뀌고 문장 사이 무음이 1.3초라 빠르고 끊긴다는 피드백).
+# 문장 앞뒤 무음은 잘라 내고(timeline_calc spans) 이 쉼만 둔다
+PACING = {"lead": 0.15, "gap": 0.3, "tail": 0.12, "hold": 0.6}
+PAD_SEC = 0.4          # 장면 뒤 쉼
+ITEM_LINES = 3         # 항목 문장: 이름과 한 줄 소개 + 설명 둘
 BRACKET = re.compile(r"\[([^\[\]]+)\]")
+ENDING = re.compile(r"(요|죠|다|까|네|세요)[.?!~]*$")  # 끝맺는 말끝 (2026-10-31: 조각 문장을 따로 합성하면 끊겨 들린다)
 ORDINALS = ["첫", "두", "세", "네", "다섯", "여섯", "일곱"]
 
 
 # ---------- 길이
 
 def target_chars(target_sec: float, cps: float, n: int, outro_chars: int = 0) -> int:
-    """대본(첫마디·항목·정리) 글자 수 목표. 장면 수(첫마디 2 + 항목마다 약 2.2 + 정리 + 끝)만큼 여백을 뺀다"""
-    scenes = 2 + 2.2 * n + 1 + (1 if outro_chars else 0)
-    sentences = 3 + 2.6 * n + 2 + (1 if outro_chars else 0)
-    overhead = scenes * (LEAD_SEC + PAD_SEC) + max(0.0, sentences - scenes) * GAP_SEC
+    """대본(첫마디·항목·정리) 글자 수 목표. cps 는 무음을 뺀 말 구간의 초당 글자(카테고리 tts.speech_chars_per_sec).
+    장면(첫마디 2 + 항목마다 2 + 정리 + 끝)과 문장 사이 쉼만큼 시간을 뺀다"""
+    extra = 1 if outro_chars else 0
+    scenes = 2 + 2 * n + 1 + extra
+    sentences = 3 + ITEM_LINES * n + 2 + extra
+    overhead = (scenes * (PACING["lead"] + PAD_SEC) + max(0, sentences - scenes) * PACING["gap"]
+                + sentences * PACING["tail"])
     outro_sec = outro_chars / cps if outro_chars else 0.0
     return max(60, round((target_sec - overhead - outro_sec) * cps))
 
@@ -66,7 +75,7 @@ def _flat_lines(data: dict[str, Any]) -> list[str]:
 def _schema(n: int) -> dict[str, Any]:
     s = {"type": "string"}
     item = {"type": "object", "properties": {"name": s, "meta": s, "tagline": s, "badge": s,
-                                             "lines": {"type": "array", "items": s, "minItems": 2, "maxItems": 3}},
+                                             "lines": {"type": "array", "items": s, "minItems": ITEM_LINES, "maxItems": ITEM_LINES}},
             "required": ["name", "meta", "tagline", "badge", "lines"], "additionalProperties": False}
     card = {"type": "object", "properties": {k: s for k in ("kicker", "claim", "claimNote", "aside", "headline", "highlight")},
             "required": ["kicker", "claim", "claimNote", "aside", "headline", "highlight"], "additionalProperties": False}
@@ -100,6 +109,8 @@ def check_script(data: Any, *, n: int, given: list[str], max_sentence: int, targ
         name = str(it.get("name", ""))
         if lines and _core(name)[:6] not in _core(lines[0]):
             problems.append(f"{i}번 항목 첫 문장에 이름 '{name}' 을 부른다: {lines[0]}")
+        if lines and count_chars(split_emphasis(lines[0])[0]) < FIRST_MIN:
+            problems.append(f"{i}번 항목 첫 문장은 이름과 한 줄 소개를 함께 {FIRST_MIN}자 이상으로 (예: '첫 번째, 문서 작업을 도와주는 docx예요'): {lines[0]}")
         if count_chars(name) > 20:
             problems.append(f"{i}번 항목 name 은 20자 이내: {name}")
     card = data.get("hookCard") or {}
@@ -119,6 +130,8 @@ def check_script(data: Any, *, n: int, given: list[str], max_sentence: int, targ
             problems.append(f"{c}자다. {max_sentence}자 이내로 줄이거나 나눈다: {text}")
         elif c < MIN_CHARS:
             problems.append(f"{c}자로 너무 짧다({MIN_CHARS}자 이상): {text}")
+        if text and not ENDING.search(text):
+            problems.append(f"끝맺지 않은 조각 문장이다. 문장마다 따로 읽으므로 ~요·~죠·~다·~까? 로 끝맺는다: {text}")
         if source and _copied(text, source):
             problems.append(f"참고 자료 표현을 그대로 옮겼다. 우리 말로 바꿔 쓴다: {text}")
     for a, b in repeated_sentences(texts):
@@ -164,7 +177,7 @@ def run_script(ctx: StepContext, job: dict[str, Any], cat: dict[str, Any], revie
     n = len(given) or int(lst.get("count") or (cat.get("listicle") or {}).get("count", {}).get("default", 5))
     rules = cat.get("script", {})
     max_sentence = int(rules.get("max_sentence_chars", 28))
-    cps = ctx.providers.chars_per_sec
+    cps = float((cat.get("tts") or {}).get("speech_chars_per_sec") or ctx.providers.chars_per_sec)
     outro = outro_for(cat, job["jobId"])
     target = target_chars(job["targetDurationSec"], cps, n, count_chars(outro["line"]) if outro else 0)
     facts = lst.get("facts") or []
@@ -208,7 +221,8 @@ def outro_for(cat: dict[str, Any], job_id: str) -> dict[str, str] | None:
 
 
 def _visual_count(item: dict[str, Any]) -> int:
-    return 2 if len(item["lines"]) >= 3 else 1
+    """항목마다 설명 그림 한 장(설명 문장 둘을 함께 맡아 5~7초 머문다, 2026-10-31)"""
+    return 1
 
 
 def _fallback(item: dict[str, Any]) -> dict[str, Any]:
@@ -259,7 +273,7 @@ def run_scenes(ctx: StepContext, script: dict[str, Any], job: dict[str, Any], ca
     if facts:
         listing += "\n\n사실 목록(숫자는 여기 것만):\n" + "\n".join(f"- {f}" for f in facts)
     messages, version = render_messages("listicle_visuals", topic=job["topic"], catalog=catalog, items=listing, count=len(items),
-                                        visual_rule="1장(설명 문장이 2개인 항목은 2장)")
+                                        visual_rule="1")
     picks: list[list[dict[str, Any]]] = [[_fallback(it)] * _visual_count(it) for it in items]
     meta: dict[str, Any] = {"promptVersion": version}
     try:
@@ -321,17 +335,18 @@ def build_scenes(lst: dict[str, Any], picks: list[list[dict[str, Any]]], outro: 
                                           **({"subtitle": lst["recap"]["subtitle"]} if lst["recap"].get("subtitle") else {}),
                                           "items": [{"name": it["name"], **({"note": it["tagline"]} if it["tagline"] else {}),
                                                      **({"tag": it["badge"]} if it["badge"] else {})} for it in items]},
-                      lst["recap"]["lines"], pad=0.3))
+                      lst["recap"]["lines"], pad=0.5))
     if outro:
         out.append(_scene("outro", "LOutro", {"title": outro["title"], **({"subtitle": outro["subtitle"]} if outro["subtitle"] else {})},
-                          [{"text": outro["line"], "emphasis": ""}], pad=0.6))
+                          [{"text": outro["line"], "emphasis": ""}], pad=0.8))
     return [sc for sc in out if sc["lines"]]  # 문장이 없는 장면(첫마디 1문장 등)은 뺀다
 
 
 # ---------- 자막
 
-def phrases_for(ctx: StepContext, scenes_doc: dict[str, Any], tts: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
-    """tts 문장마다 자막 구절. 실패한 문장은 빼고(그 문장은 통째 자막) 계속한다"""
+def phrases_for(ctx: StepContext, scenes_doc: dict[str, Any], tts: dict[str, Any]
+                ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, tuple[float, float]]]:
+    """tts 문장마다 (자막 구절, 말 구간). 실패한 문장은 빼고(그 문장은 통째 자막·무음 그대로) 계속한다"""
     emph = {}
     for sc in scenes_doc["scenes"]:
         for j, e in enumerate(sc.get("emphasis") or [], start=1):
@@ -343,10 +358,15 @@ def phrases_for(ctx: StepContext, scenes_doc: dict[str, Any], tts: dict[str, Any
 
     def speak(w: str) -> str:  # TTS 가 실제로 읽은 말로 길이를 잰다 (tts 단계와 같은 사전)
         return apply_pronunciation(w, words)
-    out = {}
+    out, spans = {}, {}
     for item in tts["items"]:
+        wav = ctx.path(item["path"])
         try:
-            out[item["id"]] = align(item["text"], float(item["seconds"]), ctx.path(item["path"]), emph.get(item["id"]), speak=speak)
+            out[item["id"]] = align(item["text"], float(item["seconds"]), wav, emph.get(item["id"]), speak=speak)
+            samples, rate = read_pcm16(wav)
+            begin, end, _ = analyze(samples, rate)
+            if end - begin > 0.2:
+                spans[item["id"]] = (begin, end)
         except Exception as e:  # 자막 쪼개기 실패가 영상을 막지 않게
             ctx.note_degraded(f"{item['id']} 자막 구절 계산 실패({type(e).__name__}), 문장 단위로")
-    return out
+    return out, spans

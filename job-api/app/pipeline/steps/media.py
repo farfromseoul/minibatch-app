@@ -53,6 +53,7 @@ class TtsStep:
         settings = ctx.providers.tts_settings()
         words = load_dictionary(ctx.settings.content_dir / "pronunciation.yaml", cat.get("pronunciation"))
         voice = (cat.get("voices") or {}).get(settings.get("engine")) or settings.get("voice")
+        speed = (cat.get("tts") or {}).get("speed")  # 카테고리 말 빠르기 (목록형 0.93, 2026-10-31). 없으면 엔진 기본
         sentences = []
         for sc in scenes["scenes"]:
             for j, text in enumerate(sc["lines"], start=1):
@@ -63,7 +64,8 @@ class TtsStep:
         final = ctx.job_dir / "tts"
         try:
             res = _post(settings["url"].rstrip("/") + "/synthesize",
-                        {"out_dir": str(tmp), "voice": voice, "sentences": [{"id": s["id"], "text": s["spoken"]} for s in sentences]},
+                        {"out_dir": str(tmp), "voice": voice, **({"speed": float(speed)} if speed else {}),
+                         "sentences": [{"id": s["id"], "text": s["spoken"]} for s in sentences]},
                         float(settings.get("timeout_sec", 900)), "tts-worker")
             if final.exists():
                 shutil.rmtree(final)
@@ -73,7 +75,7 @@ class TtsStep:
                 shutil.rmtree(tmp)
         seconds = {i["id"]: i["seconds"] for i in res["items"]}
         ctx.write_json("tts.json", {
-            "engine": settings.get("engine"), "voice": voice, "sampleRate": res.get("sample_rate"),
+            "engine": settings.get("engine"), "voice": voice, "speed": speed, "sampleRate": res.get("sample_rate"),
             "items": [{**s, "path": f"tts/{s['id']}.wav", "seconds": seconds[s["id"]]} for s in sentences],
         })
 
@@ -86,12 +88,13 @@ class TimelineStep:
     def run(self, ctx: StepContext) -> None:
         job = ctx.read_json("job.json")
         scenes, tts = ctx.read_json("scenes.json"), ctx.read_json("tts.json")
-        phrases = None
-        if job.get("format") == "listicle":  # 목록형(D42): 문장 음성의 쉼에 맞춰 구절·단어 자막
-            from .listicle import phrases_for
-            phrases = phrases_for(ctx, scenes, tts)
+        phrases = spans = pacing = None
+        if job.get("format") == "listicle":  # 목록형(D42): 문장 음성의 쉼에 맞춘 구절·단어 자막, 앞뒤 무음 잘라 일정한 쉼
+            from .listicle import PACING, phrases_for
+            phrases, spans = phrases_for(ctx, scenes, tts)
+            pacing = PACING
         t = compute_timeline(scenes, tts, fps=job["fps"], width=job["resolution"]["width"], height=job["resolution"]["height"],
-                             theme=job["theme"], phrases=phrases)
+                             theme=job["theme"], phrases=phrases, spans=spans, pacing=pacing)
         seconds = t["durationInFrames"] / job["fps"]
         target = job["targetDurationSec"]
         tol = int(job.get("durationToleranceSec") or 5)

@@ -36,6 +36,7 @@ class Sentence(BaseModel):
 class SynthesizeRequest(BaseModel):
     out_dir: str
     voice: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,32}$")  # 없으면 엔진 기본 목소리
+    speed: Optional[float] = Field(default=None, ge=0.7, le=1.3)  # 말 빠르기 배수. 없으면 엔진 기본 (목록형 쇼츠 D42, 2026-10-31)
     sentences: list[Sentence] = Field(min_length=1)
 
     @field_validator("sentences")
@@ -100,7 +101,7 @@ def create_app(engine: Optional[Engine] = None, data_dir: Optional[Path] = None)
         for s in req.sentences:
             path = out_dir / f"{s.id}.wav"
             try:
-                seconds = eng.synthesize(s.text, path, voice=req.voice)
+                seconds = eng.synthesize(s.text, path, voice=req.voice, speed=req.speed)
             except Exception as e:  # 어느 문장에서 실패했는지 돌려준다. job-api 가 재시도를 정한다
                 log.exception("합성 실패: %s", s.id)
                 raise HTTPException(500, f"문장 {s.id} 합성 실패: {type(e).__name__}: {e}")

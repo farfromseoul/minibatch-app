@@ -11,7 +11,7 @@ src/
   index.ts, Root.tsx       # Remotion 진입점. 구성(Composition) "Short" 하나. 길이·크기는 timeline 에서 정한다
   Short.tsx                # 장면(Sequence), 음성(Html5Audio), 자막 레이어
   scenes/                  # 템플릿 5종: TitleReveal, FlowDiagram, ComparisonCards, NeuralNetwork, SummaryScene
-  listicle/                # 목록형 쇼츠(D42, 테마 gold): 틀(진행 표시·항목 제목·단어 단위 자막), 장면 12종(L*), 아이콘, 글꼴 읽기
+  listicle/                # 목록형 쇼츠(D42, 테마 nova: 남색 + 민트·하늘·보라): 틀(진행 표시·항목 제목·단어 단위 자막), 장면 12종(L*), 아이콘, 글꼴 읽기
   fonts/                   # Pretendard 1.3.9 가변 글꼴(woff2) + 라이선스(SIL OFL 1.1). src 에서 import 해 번들에 넣는다
   layers/Subtitle.tsx      # 자막 (아래 안전 영역 바로 위)
   lib/timeline.ts          # timeline 모양과 검증 (JSX 없음: Node 테스트가 바로 불러온다). 목록형: captions[].words, scenes[].section, tracker
@@ -52,7 +52,7 @@ test/                      # node --test (*.test.mts), fixtures/sample-timeline.
 - 애니메이션 길이는 장면 길이의 비율 (`lib/layout.ts`의 `entrance`, `revealCount`).
 - 안전 영역: 위 250px, 아래 400px (`SAFE`, 수치 미확인).
 - 새 템플릿: `scenes/`에 컴포넌트, `scenes/index.ts`에 등록, `lib/timeline.ts`의 `TEMPLATES`와 속성 검사에 추가.
-- 목록형 장면(L*)은 `listicle/scenes.tsx` 의 `LISTICLE_SCENES` 에 등록하고, `lib/timeline.ts` 의 `LISTICLE_TEMPLATES`·속성 검사, job-api `app/schemas/templates.py` 에 같은 규칙을 둔다. 목록형 장면은 테마 `gold` 에서만 쓴다(검사가 막는다).
+- 목록형 장면(L*)은 `listicle/scenes.tsx` 의 `LISTICLE_SCENES` 에 등록하고, `lib/timeline.ts` 의 `LISTICLE_TEMPLATES`·속성 검사, job-api `app/schemas/templates.py` 에 같은 규칙을 둔다. 목록형 장면은 테마 `nova` 에서만 쓴다(검사가 막는다).
 - 목록형 화면 미리 보기: `test/fixtures/listicle-timeline.json`(음성 없음)
 - Node 의 TypeScript 실행은 타입만 지운다. `enum`, 생성자 매개변수 속성(`constructor(public x)`) 같은 문법은 쓰지 않는다(`tsconfig`의 `erasableSyntaxOnly`가 잡는다).
 

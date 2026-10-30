@@ -46,15 +46,16 @@ export const THEMES: Record<string, Theme> = {
     accent2: "#FFD54A",
     font: "'Noto Sans CJK KR', 'Noto Sans KR', sans-serif",
   },
-  // 2026-10-30 목록형 쇼츠(D42): 참고 영상의 검정 + 노랑 하나. 글꼴은 src/listicle/fonts.ts 가 Pretendard 를 읽는다
-  gold: {
+  // 목록형 쇼츠(D42). 2026-10-31 nova: 짙은 남색 + 민트·하늘·보라 그라데이션 (gold 는 참고 영상을 너무 닮아 바꿈).
+  // 실제 색은 src/listicle/style.ts. 글꼴은 src/listicle/fonts.ts 가 Pretendard 를 읽는다
+  nova: {
     style: "listicle",
-    background: "#0B0B0D",
-    surface: "#151518",
-    text: "#FFFFFF",
-    muted: "#77777E",
-    accent: "#FFC83D",
-    accent2: "#FF5A4E",
+    background: "#0A0C14",
+    surface: "#121624",
+    text: "#F3F5FB",
+    muted: "#646B80",
+    accent: "#5CF2C4",
+    accent2: "#8E7BFF",
     font: "'Pretendard Variable', 'Noto Sans CJK KR', sans-serif",
   },
 };

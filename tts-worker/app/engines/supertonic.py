@@ -36,12 +36,13 @@ class SupertonicEngine:
             self._styles[voice] = load_voice_style([str(self._styles_dir / f"{voice}.json")])
         return self._styles[voice]
 
-    def synthesize(self, text: str, out_path: Path, voice: Optional[str] = None) -> float:
+    def synthesize(self, text: str, out_path: Path, voice: Optional[str] = None, speed: Optional[float] = None) -> float:
         voice = voice or self.default_voice
         if not self.has_voice(voice):
             raise ValueError(f"목소리 {voice} 가 없다")
         with self._lock:
-            wav, duration = self._tts(text, LANG, self._style(voice), TOTAL_STEP, SPEED)
+            # speed: 길이를 speed 로 나눈다(helper._infer: dur / speed). 1보다 작으면 느리게
+            wav, duration = self._tts(text, LANG, self._style(voice), TOTAL_STEP, speed or SPEED)
         samples = wav[0, : int(self.sample_rate * float(duration[0]))]
         sf.write(str(out_path), samples, self.sample_rate, subtype="PCM_16")
         return len(samples) / self.sample_rate

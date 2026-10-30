@@ -7,11 +7,12 @@
 | 메서드 | 경로 | 요청 | 응답 |
 | --- | --- | --- | --- |
 | GET | `/healthz` | - | `{"status": "ok", "engine": "supertonic", "sample_rate": 44100}` |
-| POST | `/synthesize` | `{"out_dir": "/data/jobs/<id>/tts", "voice": "M1"(선택), "sentences": [{"id": "s01", "text": "..."}]}` | `{"sample_rate": 44100, "items": [{"id": "s01", "path": ".../s01.wav", "seconds": 3.26}]}` |
+| POST | `/synthesize` | `{"out_dir": "/data/jobs/<id>/tts", "voice": "M1"(선택), "speed": 0.93(선택), "sentences": [{"id": "s01", "text": "..."}]}` | `{"sample_rate": 44100, "items": [{"id": "s01", "path": ".../s01.wav", "seconds": 3.26}]}` |
 
 - `out_dir`는 데이터 폴더(`MINIBATCH_DATA_DIR`, 기본 `/data`) 안의 절대 경로만 받는다. 밖이면 400.
 - 문장 `id`는 영문·숫자·`_`·`-` 64자 이내, 파일 이름이 된다(`<id>.wav`). 겹치거나 빈 문장이면 422.
 - `voice`는 요청마다 고를 수 있다(카테고리마다 목소리, 아키텍처 D23). 없으면 `MINIBATCH_TTS_VOICE`. 없는 목소리면 합성 전에 400.
+- `speed`는 말 빠르기 배수(0.7~1.3, 1보다 작으면 느리게). 없으면 엔진 기본(Supertonic 1.05). 목록형 쇼츠는 0.93(D42, 2026-10-31). 범위 밖이면 422.
 - 합성에 실패하면 500, `detail`에 실패한 문장 id. 재시도는 job-api가 정한다.
 - 출력: 44.1kHz 모노 16비트 WAV.
 

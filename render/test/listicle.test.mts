@@ -39,7 +39,7 @@ test("목록형 장면은 목록형 테마에서만, 다른 테마의 장면은 
   assert.match(validateTimeline(t).join("\n"), /LHookClaim.*letterbox/);
   const u = sample();
   u.scenes[0].visual = { type: "template", component: "TitleReveal", props: { title: "x" } };
-  assert.match(validateTimeline(u).join("\n"), /TitleReveal.*gold/);
+  assert.match(validateTimeline(u).join("\n"), /TitleReveal.*nova/);
 });
 
 test("항목 장면의 번호가 진행 표시 밖이면 오류", () => {
