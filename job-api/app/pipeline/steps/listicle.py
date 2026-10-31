@@ -16,6 +16,8 @@ from typing import Any
 from app.llm.prompting import render_messages
 from app.media.align import align, analyze, read_pcm16
 from app.schemas.templates import DETAIL_VISUALS, TEMPLATES, check_props
+from app.text import readings as rd
+from app.text.pronunciation import load_dictionary
 from app.text.sentences import count_chars, repeated_sentences
 
 from .base import StepContext, StepFailure
@@ -85,8 +87,8 @@ def _schema(n: int) -> dict[str, Any]:
         "hook": {"type": "array", "items": s, "minItems": 2, "maxItems": 3}, "hookCard": card,
         "items": {"type": "array", "items": item, "minItems": n, "maxItems": n}, "recap": recap,
         "titleCandidates": {"type": "array", "items": s, "minItems": 3, "maxItems": 3},
-        "hashtags": {"type": "array", "items": s, "minItems": 1, "maxItems": 5}},
-        "required": ["hook", "hookCard", "items", "recap", "titleCandidates", "hashtags"], "additionalProperties": False}
+        "hashtags": {"type": "array", "items": s, "minItems": 1, "maxItems": 5}, "readings": rd.SCHEMA},
+        "required": ["hook", "hookCard", "items", "recap", "titleCandidates", "hashtags", "readings"], "additionalProperties": False}
 
 
 def _core(text: str) -> str:
@@ -167,6 +169,7 @@ def _pack(data: dict[str, Any]) -> dict[str, Any]:
     spoken = [x["text"] for x in hook] + [x["text"] for it in items for x in it["lines"]] + [x["text"] for x in recap["lines"]]
     card = {k: str(v).strip() for k, v in data["hookCard"].items()}
     return {"listicle": {"hook": hook, "hookCard": card, "items": items, "recap": recap},
+            "readings": rd.to_map(data.get("readings"), spoken)[0],
             "hook": spoken[0], "body": spoken[1:-1], "summary": spoken[-1],
             "titleCandidates": data["titleCandidates"], "hashtags": data["hashtags"]}
 
@@ -194,6 +197,8 @@ def run_script(ctx: StepContext, job: dict[str, Any], cat: dict[str, Any], revie
         facts_block=facts_block, number_rule=number_rule, review_feedback=review_feedback)
     source = _core(ctx.path("listicle_sources.txt").read_text(encoding="utf-8")) if ctx.path("listicle_sources.txt").exists() else ""
 
+    words = load_dictionary(ctx.settings.content_dir / "pronunciation.yaml", cat.get("pronunciation"))
+
     def check(d: Any) -> list[str]:
         return check_script(d, n=n, given=given, max_sentence=max_sentence, target=target, has_facts=bool(facts), source=source)
 
@@ -204,6 +209,8 @@ def run_script(ctx: StepContext, job: dict[str, Any], cat: dict[str, Any], revie
     if out.problems:
         ctx.note_degraded("; ".join(out.problems))
     data = _pack(out.data)
+    spoken = [data["hook"], *data["body"], data["summary"]]
+    data["readings"] = rd.fill(ctx, spoken, data["readings"], words)  # 빠진 영어 읽기만 따로 묻기 (2026-10-31)
     chars = sum(count_chars(t) for t in [data["hook"], *data["body"], data["summary"]])
     data["meta"] = meta_of(out, version, targetChars=target, charCount=chars, format="listicle")
     ctx.write_json("script.json", data)
@@ -298,6 +305,7 @@ def run_scenes(ctx: StepContext, script: dict[str, Any], job: dict[str, Any], ca
     ctx.write_json("scenes.json", {
         "schemaVersion": 1, "jobId": job["jobId"], "title": script["titleCandidates"][0],
         "tracker": {"items": [{"name": it["name"], **({"meta": it["meta"]} if it["meta"] else {})} for it in items]},
+        "readings": script.get("readings") or {},
         "scenes": [{"id": f"s{i:02d}", **sc} for i, sc in enumerate(scenes, start=1)],
         "meta": meta,
     })
@@ -379,9 +387,10 @@ def phrases_for(ctx: StepContext, scenes_doc: dict[str, Any], tts: dict[str, Any
         for j, e in enumerate(sc.get("emphasis") or [], start=1):
             emph[f"{sc['id']}-{j:02d}"] = e
     from app.core.category import load_category
-    from app.text.pronunciation import apply_pronunciation, load_dictionary
+    from app.text.pronunciation import apply_pronunciation
     job = ctx.read_json("job.json")
-    words = load_dictionary(ctx.settings.content_dir / "pronunciation.yaml", load_category(ctx.settings, job["category"]).get("pronunciation"))
+    words = rd.merge(scenes_doc.get("readings") or {},
+                     load_dictionary(ctx.settings.content_dir / "pronunciation.yaml", load_category(ctx.settings, job["category"]).get("pronunciation")))
 
     def speak(w: str) -> str:  # TTS 가 실제로 읽은 말로 길이를 잰다 (tts 단계와 같은 사전)
         return apply_pronunciation(w, words)

@@ -139,6 +139,7 @@ class ScenesStep:
             "schemaVersion": 1,
             "jobId": job["jobId"],
             "title": script["titleCandidates"][0],
+            "readings": script.get("readings") or {},  # 영어 단어의 한글 읽기 → tts (2026-10-31)
             "scenes": [{"id": f"s{i:02d}", **sc} for i, sc in enumerate(scenes, start=1)],
             "meta": meta_of(out, version, **({"autoFixed": auto_fixed} if auto_fixed else {})),
         })

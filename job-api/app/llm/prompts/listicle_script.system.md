@@ -26,6 +26,7 @@
 - recap: title(정리 화면 제목, 10자 이내), subtitle(작은 띠, 14자 이내, 없으면 ""), lines(1~2문장: 누구에게 무엇부터 권하는지).
 - titleCandidates: 제목 후보 3개(각 30자 이내, 무엇을 꼽았는지 드러나게, 낚시 금지)
 - hashtags: 3~5개
+- readings: 대본(hook·items·recap 의 모든 문장, 괄호 [ ] 는 빼고)에 나온 영어(로마자) 단어·이름마다 {term, reading}. reading 은 한국어 화자가 자연스럽게 읽는 한글(예: pdf → 피디에프, docx → 독스, GitHub → 깃허브, Claude Code → 클로드 코드, skill-creator → 스킬 크리에이터, CLAUDE.md → 클로드 엠디). 약자는 알파벳을 하나씩, 단어는 영어 발음대로, 한글과 띄어쓰기만. 대본에 영어가 없으면 빈 배열
 
 쓰지 않는 것: $forbidden
 - 진행자의 개인 경험담("제가 매일 써요", "써 보니") — 진행자는 AI 음성이다

@@ -85,7 +85,7 @@ tests/                  # 단위 테스트 (unittest)
 
 | 단계 | 하는 일 | 실패 |
 | --- | --- | --- |
-| tts | 발음 사전(`content/pronunciation.yaml`) 적용 → tts-worker `POST /synthesize`(카테고리 목소리) → `tts/`, `tts.json`(원문·읽는 문장·길이) | 연결 실패·시간 초과·5xx transient, 4xx deterministic |
+| tts | 발음 사전(`content/pronunciation.yaml`) + 대본의 영어 읽기(`scenes.json` readings, D44, 같은 단어는 사전 우선) 적용 → tts-worker `POST /synthesize`(카테고리 목소리) → `tts/`, `tts.json`(원문·읽는 문장·길이) | 연결 실패·시간 초과·5xx transient, 4xx deterministic |
 | timeline | 음성 길이로 장면·자막·음성 시작 프레임 확정(`app/pipeline/timeline_calc.py`). 목록형은 자막을 구절·단어로(`app/media/align.py`) | 목표 ± 허용(기본 60±5초, 목록형 45±8초) 밖이면 deterministic `retry_from=script` |
 | visuals | 생성 클립 장면만 처리. `clip_engine: none`이면 그대로 통과 | 생성기는 Phase 2 |
 | render | render-worker `POST /render`(`MINIBATCH_RENDER_WORKER_URL`) → `render/final.mp4` → job-api 가 ffmpeg `loudnorm`(두 번: 재고 바꾸기)으로 오디오만 -14 LUFS·최대 -1.5 dBTP 로 맞춤(영상은 복사) | 409·5xx transient, 422 deterministic `retry_from=scenes`, 음량 맞추기 실패 deterministic `retry_from=render` |

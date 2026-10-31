@@ -40,7 +40,8 @@ def reply(names=NAMES, per=15, claim="수백 가지"):
             "hookCard": {"kicker": "클로드 스킬", "claim": claim, "claimNote": "소문", "aside": "", "headline": "진짜 쓸 건 3개",
                          "highlight": "3개"},
             "items": items, "recap": {"title": "정리하면", "subtitle": "", "lines": [fill("정리 첫 문장", per), fill("마무리 권하기", per)]},
-            "titleCandidates": ["a", "b", "c"], "hashtags": ["#AI"]}
+            "titleCandidates": ["a", "b", "c"], "hashtags": ["#AI"],
+            "readings": [{"term": n, "reading": "이름"} for n in names]}
 
 
 VISUALS = {"items": [  # 항목마다 그림 한 장 (2026-10-31)

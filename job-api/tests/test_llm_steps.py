@@ -24,6 +24,8 @@ class LlmStepCase(AppTestCase):
         self.llm = FakeLlm()
         super().setUp()
         shutil.copy(REAL_CATEGORY, self.settings.content_dir / "categories" / "ai-it.yaml")
+        # 운영과 같은 발음 사전 (AI 등은 사전에 있어 영어 읽기를 따로 묻지 않는다, 2026-10-31)
+        shutil.copy(REAL_CATEGORY.parents[1] / "pronunciation.yaml", self.settings.content_dir / "pronunciation.yaml")
 
     def make_providers(self):
         return FakeRegistry(self.llm)

@@ -19,6 +19,7 @@ from app.media.ffmpeg import normalize_loudness
 from app.stock.pixabay import Pixabay, StockError, relevant
 from app.pipeline.timeline_calc import compute_timeline
 from app.text.pronunciation import apply_pronunciation, load_dictionary
+from app.text.readings import merge as merge_readings
 
 from .base import StepContext, StepFailure
 from .llm_common import ask
@@ -51,7 +52,9 @@ class TtsStep:
         job = ctx.read_json("job.json")
         cat = load_category(ctx.settings, job["category"])
         settings = ctx.providers.tts_settings()
-        words = load_dictionary(ctx.settings.content_dir / "pronunciation.yaml", cat.get("pronunciation"))
+        # 공통 발음 사전 + 대본 LLM 의 영어 읽기(scenes.json readings). 같은 단어는 공통 사전이 이긴다 (2026-10-31)
+        words = merge_readings(scenes.get("readings") or {},
+                               load_dictionary(ctx.settings.content_dir / "pronunciation.yaml", cat.get("pronunciation")))
         voice = (cat.get("voices") or {}).get(settings.get("engine")) or settings.get("voice")
         speed = (cat.get("tts") or {}).get("speed")  # 카테고리 말 빠르기 (목록형 0.93, 2026-10-31). 없으면 엔진 기본
         sentences = []

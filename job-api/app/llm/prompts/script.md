@@ -6,6 +6,7 @@ hook: 시청자가 겪어 봤을 장면이나 궁금증을 질문 한 문장으�
 summary: hook 질문에 답하는 결론 한 문장. body 의 정의나 문장을 그대로 되풀이하지 않는다.
 titleCandidates: 제목 후보 3개 (각 30자 이내, 과장·낚시 없이 무엇을 알려 주는지)
 hashtags: 해시태그 3~5개
+readings: 대본(hook·body·summary 등 말하는 모든 문장)에 나온 영어(로마자) 단어·이름마다 {term, reading}. reading 은 한국어 화자가 자연스럽게 읽는 한글(예: pdf → 피디에프, docx → 독스, GitHub → 깃허브, Claude Code → 클로드 코드, skill-creator → 스킬 크리에이터, CLAUDE.md → 클로드 엠디). 약자는 알파벳을 하나씩, 단어는 영어 발음대로, 한글과 띄어쓰기만. 대본에 영어가 없으면 빈 배열
 $series_block
 $news_block
 $review_feedback

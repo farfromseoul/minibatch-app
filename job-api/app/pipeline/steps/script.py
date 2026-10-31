@@ -14,6 +14,8 @@ from typing import Any
 from app.core.category import load_category
 from app.llm.prompting import render, render_messages
 from app.text.cta import outro_for
+from app.text import readings as rd
+from app.text.pronunciation import load_dictionary
 from app.text.sentences import count_chars, repeated_sentences, script_sentences
 
 from .base import StepContext, StepFailure
@@ -47,6 +49,7 @@ def _schema(series: dict | None, body_n: int) -> dict:
         "summary": s,
         "titleCandidates": {"type": "array", "items": s, "minItems": 3, "maxItems": 3},
         "hashtags": {"type": "array", "items": s, "minItems": 1, "maxItems": 5},
+        "readings": rd.SCHEMA,  # 영어 단어의 한글 읽기 (2026-10-31)
     }
     if series:
         props["episodeSummary"] = s
@@ -159,10 +162,13 @@ class ScriptStep:
             news_block=_news_block(job.get("news")), review_feedback=_review_feedback(ctx))
         source = _bare(ctx.path("news_source.txt").read_text(encoding="utf-8")) if job.get("news") and ctx.path("news_source.txt").exists() else ""
         schema = _schema(series, body_n)
+        words = load_dictionary(ctx.settings.content_dir / "pronunciation.yaml", cat.get("pronunciation"))
+        soft = (LENGTH_TAG,)  # 이 문제만 남으면 대본은 통과(기록만)
 
         def check(data: Any, need_optional: bool = True) -> list[str]:
             problems = []
-            required = [k for k in schema["required"] if need_optional or k not in OPTIONAL_SENTENCES]
+            # readings 는 빠져도 대본은 쓸 수 있다(영어 읽기 문제로 따로 알린다)
+            required = [k for k in schema["required"] if k != "readings" and (need_optional or k not in OPTIONAL_SENTENCES)]
             missing = [k for k in required if not data.get(k)] if isinstance(data, dict) else required
             if missing:
                 return [f"{k} 가 없다" + (" (recap: 앞 화 핵심을 짚는 한 문장)" if k == "recap" else "") for k in missing]
@@ -203,19 +209,22 @@ class ScriptStep:
 
         out = ask(ctx, messages, schema, "script", check, adjust=trim)
         data, dropped = out.data, []
-        hard = [p for p in out.problems if not p.startswith(LENGTH_TAG)]
+        hard = [p for p in out.problems if not p.startswith(soft)]
         if hard and isinstance(data, dict) and data.get("hook"):
             # 다시 물어도 지난 화 짚기·다음 화 예고만 규칙을 어기면 그 문장을 빼고 쓴다 (2026-10-24 실제: 4화 recap 이
             # 되풀이·49자로 세 번 떨어져 시리즈가 멈췄다). 후킹·본문·요약 문제는 그대로 실패
             data, dropped = _drop_bad_optional(data, max_sentence)
             if dropped:
-                hard = [p for p in check(data, need_optional=False) if not p.startswith(LENGTH_TAG)]
+                hard = [p for p in check(data, need_optional=False) if not p.startswith(soft)]
                 ctx.note_degraded("규칙을 어긴 문장을 뺐다: " + " / ".join(dropped))
         if hard:
             raise StepFailure("deterministic", "대본 규칙을 지키지 못했다: " + "; ".join(hard)[:800], retry_from="script")
         if out.problems:  # 글자 수만 어긋남
             ctx.note_degraded("; ".join(out.problems))
         data = dict(data)
+        spoken = script_sentences(data)
+        # 영어 읽기: 대본이 낸 것 + 빠진 단어만 따로 묻기 (2026-10-31)
+        data["readings"] = rd.fill(ctx, spoken, rd.to_map(data.get("readings"), spoken)[0], words)
         chars = sum(count_chars(t) for t in script_sentences(data))
         data["meta"] = meta_of(out, version, targetChars=target, charCount=chars, trimmedSentences=ctx.meta.get("trimmed", []),
                                droppedSentences=dropped)
