@@ -24,6 +24,18 @@ from .base import StepContext, StepFailure
 from .llm_common import ask, meta_of
 
 LENGTH_TAG = "글자 수"
+HOOK_TAG = "첫마디 방식"
+# 첫마디 방식 (2026-10-31: 늘 '많다는데 → 진짜 쓸 건 N개' 로 고정된다는 피드백). LLM 이 주제에 맞는 것을 고르고,
+# 바로 앞 영상과 같은 방식이면 한 번 더 묻는다(그래도 같으면 기록만)
+HOOK_STYLES = {
+    "contrast": ("숫자 대비", "흔히 '많다·다양하다'는 말 → 그중 고른 N개", "클로드 스킬이 수백 가지나 있죠", "수백 가지", "진짜 쓸 건 5개"),
+    "question": ("질문", "시청자가 겪는 귀찮음·궁금증을 묻는다", "PDF 표, 아직 손으로 옮기세요?", "아직 손으로?", "1분이면 되는 5가지"),
+    "situation": ("공감 상황", "누구나 겪은 장면을 그린다", "회의록 정리하다 퇴근 늦은 적 있죠", "퇴근 직전", "꼭 써 볼 5개"),
+    "result": ("결과 먼저", "이걸 쓰면 무엇이 달라지는지부터", "이 다섯 개면 문서 작업이 확 줄어요", "확 줄어요", "시간 아끼는 5개"),
+    "myth": ("오해 깨기", "흔한 믿음을 뒤집는다", "스킬은 많이 깔수록 좋은 게 아니에요", "많을수록?", "딱 3개면 충분"),
+    "before_after": ("전후 비교", "쓰기 전과 후를 대비한다(숫자는 참고 자료에 있을 때만)", "어제는 손으로, 오늘은 한 줄로 끝났어요", "손 → 한 줄", "차이를 만든 5개"),
+}
+NUMBER_WORDS = {1: ("하나", "한"), 2: ("둘", "두"), 3: ("셋", "세"), 4: ("넷", "네"), 5: ("다섯",), 6: ("여섯",), 7: ("일곱",)}
 TOLERANCE = 0.15       # 목록형은 문장을 빼서 맞추지 않는다(항목 구조). 넉넉히 두고 timeline 이 실제 길이로 다시 판정
 MIN_CHARS = 6
 FIRST_MIN = 12         # 항목 첫 문장(이름 + 한 줄 소개). '첫째는 pdf예요'(8자)는 카드가 1.6초만 보였다
@@ -85,10 +97,12 @@ def _schema(n: int) -> dict[str, Any]:
              "required": ["title", "subtitle", "lines"], "additionalProperties": False}
     return {"type": "object", "properties": {
         "hook": {"type": "array", "items": s, "minItems": 2, "maxItems": 3}, "hookCard": card,
+        "hookStyle": {"type": "string", "enum": list(HOOK_STYLES)},
         "items": {"type": "array", "items": item, "minItems": n, "maxItems": n}, "recap": recap,
         "titleCandidates": {"type": "array", "items": s, "minItems": 3, "maxItems": 3},
         "hashtags": {"type": "array", "items": s, "minItems": 1, "maxItems": 5}, "readings": rd.SCHEMA},
-        "required": ["hook", "hookCard", "items", "recap", "titleCandidates", "hashtags", "readings"], "additionalProperties": False}
+        "required": ["hook", "hookStyle", "hookCard", "items", "recap", "titleCandidates", "hashtags", "readings"],
+        "additionalProperties": False}
 
 
 def _core(text: str) -> str:
@@ -96,7 +110,7 @@ def _core(text: str) -> str:
 
 
 def check_script(data: Any, *, n: int, given: list[str], max_sentence: int, target: int, has_facts: bool,
-                 source: str = "") -> list[str]:
+                 source: str = "", recent_styles: list[str] | None = None) -> list[str]:
     if not isinstance(data, dict):
         return ["JSON 객체가 필요하다"]
     items = data.get("items") or []
@@ -115,7 +129,15 @@ def check_script(data: Any, *, n: int, given: list[str], max_sentence: int, targ
             problems.append(f"{i}번 항목 첫 문장은 이름과 한 줄 소개를 함께 {FIRST_MIN}자 이상으로 (예: '첫 번째, 문서 작업을 도와주는 docx예요'): {lines[0]}")
         if count_chars(name) > 20:
             problems.append(f"{i}번 항목 name 은 20자 이내: {name}")
+    style = data.get("hookStyle")
+    if style not in HOOK_STYLES:
+        problems.append(f"hookStyle 은 {', '.join(HOOK_STYLES)} 중 하나")
+    elif recent_styles and style == recent_styles[0]:
+        problems.append(f"{HOOK_TAG}: 바로 앞 영상과 같은 '{HOOK_STYLES[style][0]}' 방식이다. 다른 방식으로 첫마디를 다시 쓴다")
     card = data.get("hookCard") or {}
+    headline = str(card.get("headline", ""))
+    if not (str(n) in headline or any(w in headline for w in NUMBER_WORDS.get(n, ()))):
+        problems.append(f"hookCard.headline 에 개수 {n} 을 넣는다(예: '{n}개', '{n}가지'): {headline}")
     if count_chars(str(card.get("claim", ""))) > 8:
         problems.append(f"hookCard.claim 은 8자 이내: {card.get('claim')}")
     if card.get("highlight") and card["highlight"] not in str(card.get("headline", "")):
@@ -168,7 +190,7 @@ def _pack(data: dict[str, Any]) -> dict[str, Any]:
              "lines": lines(data["recap"]["lines"])}
     spoken = [x["text"] for x in hook] + [x["text"] for it in items for x in it["lines"]] + [x["text"] for x in recap["lines"]]
     card = {k: str(v).strip() for k, v in data["hookCard"].items()}
-    return {"listicle": {"hook": hook, "hookCard": card, "items": items, "recap": recap},
+    return {"listicle": {"hook": hook, "hookStyle": str(data.get("hookStyle") or ""), "hookCard": card, "items": items, "recap": recap},
             "readings": rd.to_map(data.get("readings"), spoken)[0],
             "hook": spoken[0], "body": spoken[1:-1], "summary": spoken[-1],
             "titleCandidates": data["titleCandidates"], "hashtags": data["hashtags"]}
@@ -190,8 +212,13 @@ def run_script(ctx: StepContext, job: dict[str, Any], cat: dict[str, Any], revie
                    + "\n") if given else ""
     number_rule = ("참고 자료 사실 목록에 있는 숫자만 쓴다" if facts else
                    "참고 자료가 없으니 별 수·다운로드 수·가격·버전 같은 구체적인 숫자를 쓰지 않는다(항목 수 N 은 된다)")
+    recent = recent_hooks(ctx)
+    styles = "\n".join(f"  - {k} ({v[0]}): {v[1]}. 첫 문장 예 \"{v[2]}\", claim 예 \"{v[3]}\", headline 예 \"{v[4]}\""
+                       for k, v in HOOK_STYLES.items())
+    recent_block = ("최근 첫마디(같은 방식·같은 말투를 피한다, 최근 것부터):\n"
+                    + "\n".join(f"- {s or '?'}: {h}" for s, h in recent) + "\n") if recent else ""
     messages, version = render_messages(
-        "listicle_script", topic=job["topic"], count=n, target_sec=job["targetDurationSec"], audience=cat.get("audience", ""),
+        "listicle_script", topic=job["topic"], count=n, hook_styles=styles, recent_hooks=recent_block, target_sec=job["targetDurationSec"], audience=cat.get("audience", ""),
         structure=rules.get("structure", ""), forbidden=", ".join(rules.get("forbidden", [])), max_sentence=max_sentence,
         min_chars=MIN_CHARS, target_chars=target, item_chars=round(target * 0.75 / n), given_items=given_items,
         facts_block=facts_block, number_rule=number_rule, review_feedback=review_feedback)
@@ -200,10 +227,11 @@ def run_script(ctx: StepContext, job: dict[str, Any], cat: dict[str, Any], revie
     words = load_dictionary(ctx.settings.content_dir / "pronunciation.yaml", cat.get("pronunciation"))
 
     def check(d: Any) -> list[str]:
-        return check_script(d, n=n, given=given, max_sentence=max_sentence, target=target, has_facts=bool(facts), source=source)
+        return check_script(d, n=n, given=given, max_sentence=max_sentence, target=target, has_facts=bool(facts), source=source,
+                            recent_styles=[s for s, _ in recent])
 
     out = ask(ctx, messages, _schema(n), "listicle_script", check)
-    hard = [p for p in out.problems if not p.startswith(LENGTH_TAG)]
+    hard = [p for p in out.problems if not p.startswith((LENGTH_TAG, HOOK_TAG))]
     if hard:
         raise StepFailure("deterministic", "목록형 대본 규칙을 지키지 못했다: " + "; ".join(hard)[:800], retry_from="script")
     if out.problems:
@@ -214,6 +242,32 @@ def run_script(ctx: StepContext, job: dict[str, Any], cat: dict[str, Any], revie
     chars = sum(count_chars(t) for t in [data["hook"], *data["body"], data["summary"]])
     data["meta"] = meta_of(out, version, targetChars=target, charCount=chars, format="listicle")
     ctx.write_json("script.json", data)
+
+
+RECENT_HOOKS = 5
+
+
+def recent_hooks(ctx: StepContext) -> list[tuple[str, str]]:
+    """최근 목록형 영상의 (첫마디 방식, 첫 문장). 최근 것부터, 이 작업은 빼고. 대본이 없는 작업은 건너뛴다"""
+    from sqlalchemy import select
+
+    from app.db.models import Job
+    with ctx.db() as s:
+        ids = s.scalars(select(Job.id).where(Job.category == "listicle", Job.id != ctx.job_id)
+                        .order_by(Job.created_at.desc(), Job.id.desc()).limit(RECENT_HOOKS * 2)).all()
+    out = []
+    for jid in ids:
+        p = ctx.settings.jobs_dir / jid / "script.json"
+        try:
+            lst = json.loads(p.read_text(encoding="utf-8")).get("listicle") or {}
+        except (OSError, ValueError):
+            continue
+        hook = lst.get("hook") or []
+        if hook:
+            out.append((str(lst.get("hookStyle") or ""), " ".join(h.get("text", "") for h in hook)))
+        if len(out) >= RECENT_HOOKS:
+            break
+    return out
 
 
 # ---------- 장면

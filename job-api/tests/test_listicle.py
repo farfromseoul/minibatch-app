@@ -37,6 +37,7 @@ def reply(names=NAMES, per=15, claim="수백 가지"):
                       "lines": [f"{ls.ORDINALS[i]} 번째는 [{name}]예요",
                                 fill(f"{i}가 하는 일 설명", per), fill(f"{i}를 쓰는 순간", per)]})
     return {"hook": [fill("첫마디 하나", per), fill("둘째 첫마디", per), fill("셋째 이어서", per)],
+            "hookStyle": "contrast",
             "hookCard": {"kicker": "클로드 스킬", "claim": claim, "claimNote": "소문", "aside": "", "headline": "진짜 쓸 건 3개",
                          "highlight": "3개"},
             "items": items, "recap": {"title": "정리하면", "subtitle": "", "lines": [fill("정리 첫 문장", per), fill("마무리 권하기", per)]},
@@ -142,6 +143,25 @@ class ScriptRulesTest(unittest.TestCase):
         d = reply(names=["pdf", "superpowers", "claude-mem"])
         d["items"][0]["lines"][0] = "첫째는 [pdf]예요"  # 2026-10-31 실제: 카드가 1.6초만 보였다
         self.assertTrue(any("한 줄 소개" in p for p in self.check(d)))
+
+    def test_hook_style_must_be_known(self):
+        d = reply()
+        d["hookStyle"] = "shout"
+        self.assertTrue(any("hookStyle" in p for p in self.check(d)))
+
+    def test_headline_needs_the_count(self):
+        d = reply()
+        d["hookCard"]["headline"] = "진짜 쓸 것들"
+        d["hookCard"]["highlight"] = ""
+        self.assertTrue(any("개수" in p for p in self.check(d)))
+        d["hookCard"]["headline"] = "딱 세 가지면 충분"
+        self.assertFalse(any("개수" in p for p in self.check(d)))
+
+    def test_same_style_as_previous_video_is_flagged_softly(self):
+        problems = self.check(reply(), recent_styles=["contrast", "question"])
+        same = [p for p in problems if p.startswith(ls.HOOK_TAG)]
+        self.assertTrue(same)
+        self.assertEqual(self.check(reply(), recent_styles=["question", "contrast"]), [])  # 바로 앞만 피한다
 
     def test_pack_splits_emphasis_and_keeps_compat_fields(self):
         data = ls._pack(reply())
@@ -318,6 +338,36 @@ class TopCommandTest(ListicleCase):
     def test_api_rejects_non_http_reference(self):
         res = self.post("/listicle", {"topic": "x", "references": ["file:///etc/passwd"]})
         self.assertEqual(res.status_code, 400)
+
+
+class HookVarietyTest(ListicleCase):
+    """첫마디가 늘 '많다는데 → 진짜 쓸 건 N개' 로 고정됐다 (2026-10-31 사용자). 방식 목록에서 고르고, 최근 영상과 다른 방식으로"""
+
+    def previous(self, job_id, style, hook):
+        d = self.job_dir(job_id)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "script.json").write_text(json.dumps({"listicle": {"hookStyle": style, "hook": [{"text": hook, "emphasis": ""}]}},
+                                                  ensure_ascii=False), encoding="utf-8")
+
+    def test_prompt_lists_styles_and_recent_hooks(self):
+        old = self.post("/listicle", {"topic": "터미널 도구", "count": 3}).json()["id"]
+        self.previous(old, "contrast", "터미널 도구가 수백 가지나 있죠.")
+        job_id = self.post("/listicle", {"topic": "클로드 스킬", "count": 3}).json()["id"]
+        self.llm.responses = [reply()] * 3
+        self.run_step(job_id, "topic")
+        self.run_step(job_id, "script")
+
+        req = [r for r in self.llm.requests if r["schema_name"] == "listicle_script"]
+        system, user = req[0]["messages"][0]["content"], req[0]["messages"][-1]["content"]
+        for style in ls.HOOK_STYLES:
+            self.assertIn(style, system)
+        self.assertNotIn("많다는데, 진짜 쓸 건 N개", system)
+        self.assertIn("터미널 도구가 수백 가지나 있죠.", user)  # 최근 첫마디
+        self.assertIn("contrast", user)
+        # 바로 앞과 같은 방식이라 다시 물었다(기록만 남기고 대본은 통과)
+        self.assertEqual(len(req), 3)
+        self.assertEqual(self.get(f"/jobs/{job_id}/steps/script").json()["status"], "succeeded")
+        self.assertEqual(self.read(job_id, "script.json")["listicle"]["hookStyle"], "contrast")
 
 
 class ListicleProductionTest(ListicleCase):
