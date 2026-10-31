@@ -132,12 +132,23 @@ LISTICLE = "listicle"
 
 
 def create_listicle_job(s: Session, settings, now: datetime, *, topic: str, count: int,
-                        references: Optional[list[str]] = None, items: Optional[list[str]] = None) -> Job:
-    """목록형 쇼츠 (D42): 텔레그램 /top·POST /listicle. 단독 작업, 참고 자료·항목 이름은 작업 입력에 두고 주제 단계가 읽는다"""
+                        references: Optional[list[str]] = None, items: Optional[list[str]] = None,
+                        theme: Optional[str] = None) -> tuple[Job, str]:
+    """목록형 쇼츠 (D42): 텔레그램 /top·POST /listicle. 단독 작업, 참고 자료·항목 이름은 작업 입력에 두고 주제 단계가 읽는다.
+    화면 테마(v1.3): 주면 그 테마(themeChosen), 없으면 추천(바로 앞 목록형과 다르게). 돌려주는 글은 추천 이유"""
+    from app.core.category import load_category
+    from . import themes
     ensure_category(settings, LISTICLE)
     items = [i.strip() for i in (items or []) if i.strip()]
-    return _insert(s, settings, now, topic=topic, category=LISTICLE,
-                   extra={"listicle": {"count": len(items) or count, "references": list(references or []), "items": items}})
+    cat = load_category(settings, LISTICLE)
+    if theme:
+        name, why = theme, "직접 고름"
+    else:
+        name, why = themes.recommend(cat, topic, items, themes.previous_theme(s))
+    job = _insert(s, settings, now, topic=topic, category=LISTICLE,
+                  extra={"listicle": {"count": len(items) or count, "references": list(references or []), "items": items,
+                                      "theme": name, "themeChosen": bool(theme)}})
+    return job, why
 
 
 def _auto_select(s: Session, settings, now: datetime) -> Job:

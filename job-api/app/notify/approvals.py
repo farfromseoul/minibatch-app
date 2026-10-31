@@ -25,7 +25,9 @@ from sqlalchemy import select
 from app.core.errors import ApiError
 from app.core.timeutil import kst_date
 from app.db.models import Episode, Job, Publication, Series
+from app.core.category import load_category
 from app.domain import cancel as cancel_domain, generation, jobs as jobs_domain, overview, review, series_order, stuck
+from app.domain import themes as themes_domain
 from app.domain.status import EP_DONE
 from app.publish.approve import approve_and_publish
 
@@ -46,7 +48,7 @@ HELP = """🤖 MiniBatch 명령
    예) /series 클로드 코드 외부 스킬, 5
        https://github.com/anthropics/skills
        1. 스킬이란 무엇일까?
-/top 주제, 개수 — 목록형 쇼츠 하나 만들기 (개수 3~5, 빼면 5. 다음 정각에 만든다)
+/top 주제, 개수[, 테마] — 목록형 쇼츠 하나 만들기 (개수 3~5, 빼면 5. 테마 nova·paper·terminal·pop, 빼면 추천 + 버튼)
    다음 줄에 (선택) 참고 자료 주소(http…, 5개까지) · 항목 이름('1.' 또는 '-' 로 시작, 주면 그 개수)
    예) /top 클로드 코드에서 진짜 쓸 기능, 5
        https://docs.anthropic.com/claude-code
@@ -73,7 +75,15 @@ DEFAULT_COUNT, MIN_COUNT, MAX_COUNT = 10, 3, 20  # 시리즈 화 수 (D37)
 COUNT = re.compile(r"^(\d+)\s*(화|편)?$")
 EXAMPLE = "예) 쿠버네티스 기초, 8"
 TOP_DEFAULT, TOP_MIN, TOP_MAX = 5, 3, 5  # 목록형 쇼츠 항목 수 (D42)
-TOP_EXAMPLE = "예) /top 개발자가 매일 쓰는 터미널 도구, 5"
+TOP_EXAMPLE = "예) /top 개발자가 매일 쓰는 터미널 도구, 5 (끝에 ', 테마' 를 붙이면 그 테마: nova·paper·terminal·pop)"
+
+
+def split_theme(body: str, cat: dict) -> tuple[str, Optional[str]]:
+    """'/top 주제, 5, paper' 의 첫 줄 끝이 등록된 테마면 떼어 낸다 (v1.3). 아니면 그대로(주제의 일부)"""
+    first, nl, rest = body.partition("\n")
+    head, sep, tail = first.replace("，", ",").rpartition(",")
+    name = themes_domain.resolve(cat, tail) if sep else None
+    return ((head + nl + rest) if name else body), name
 
 
 MAX_REFERENCES = 5
@@ -221,6 +231,9 @@ class TelegramApprovals:
             return self._question_button(target)
         if kind == "pc":
             return self._change_plan(target)
+        if kind == "th":  # 목록형 테마 고르기 (v1.3)
+            job_id, _, name = target.rpartition(":")
+            return self._set_theme(job_id, name)
         if kind == "n":  # IT 뉴스 [이걸로] (D40)
             if self.news is None:
                 return "IT 뉴스 기능이 꺼져 있습니다"
@@ -394,6 +407,8 @@ class TelegramApprovals:
         if not body.strip():
             self._safe_send(f"/top 주제, 개수 로 목록형 쇼츠를 만듭니다. {TOP_EXAMPLE}", None)
             return
+        cat = load_category(self.settings, "listicle")
+        body, theme = split_theme(body, cat)  # 첫 줄 끝 ', 테마' (v1.3)
         try:
             req = parse_request(body, default=TOP_DEFAULT, lo=TOP_MIN, hi=TOP_MAX, unit="항목")
         except ValueError as e:
@@ -401,15 +416,48 @@ class TelegramApprovals:
             return
         try:
             with self.db() as s:
-                job = jobs_domain.create_listicle_job(s, self.settings, self.clock(), topic=req.theme, count=req.count,
-                                                      references=req.references, items=[i[:60] for i in req.episodes])
+                job, why = jobs_domain.create_listicle_job(s, self.settings, self.clock(), topic=req.theme, count=req.count,
+                                                           references=req.references, items=[i[:60] for i in req.episodes], theme=theme)
                 s.commit()
-                job_id = job.id
+                job_id, chosen = job.id, job.input["listicle"]["theme"]
         except ApiError as e:
             self._safe_send(f"⚠️ {e.message}", None)
             return
         extra = (f" · 참고 자료 {len(req.references)}개" if req.references else "") + (" · 항목 직접" if req.episodes else "")
-        self._safe_send(f"✅ 목록형 쇼츠 등록: {req.theme}, {req.count}개{extra} ({job_id})\n다음 정각 생산에서 먼저 만듭니다. 진행은 /status", None)
+        self._safe_send(f"✅ 목록형 쇼츠 등록: {req.theme}, {req.count}개{extra} ({job_id})\n다음 정각 생산에서 먼저 만듭니다(바로 만들려면 /run). 진행은 /status", None)
+        self._send_theme_choice(cat, job_id, chosen, why)
+
+    def _send_theme_choice(self, cat: dict, job_id: str, current: str, why: str) -> None:
+        """테마 미리보기 사진 + [테마] 버튼 (v1.3). 사진 메시지는 글 고치기가 달라 버튼은 글 메시지에 단다"""
+        preview = Path(self.settings.content_dir) / "themes" / "preview.png"
+        order = themes_domain.names(cat)
+        if preview.is_file():
+            try:
+                self.bot.send_photo(preview, "🎨 화면 테마 미리보기 (왼쪽부터 " + " · ".join(order) + ")")
+            except TelegramError as e:
+                log.warning("테마 미리보기 사진 실패: %s", e)
+        lines = [f"🎨 테마: {themes_domain.label(cat, current)} ({why})"]
+        for t in themes_domain.entries(cat):
+            lines.append(f"· {t['name']}: {t.get('mood', '')} — {t.get('fits', '')}")
+        lines.append("만들기 시작 전까지 버튼으로 바꿀 수 있습니다. 누르지 않으면 이 테마로 만듭니다.")
+        buttons = [(f"{n} ✓" if n == current else n, f"th:{job_id}:{n}") for n in order]
+        self._safe_send("\n".join(lines), buttons)
+
+    def _set_theme(self, job_id: str, name: str) -> str:
+        cat = load_category(self.settings, "listicle")
+        if name not in themes_domain.names(cat):
+            return f"없는 테마: {name}"
+        with self.db() as s:
+            job = s.get(Job, job_id)
+            if job is None:
+                return f"작업이 없습니다: {job_id}"
+            if job.status != "PENDING" or job.current_step is not None:
+                return f"이미 만들기 시작해서 테마를 바꿀 수 없습니다 ({job_id})"
+            lst = dict((job.input or {}).get("listicle") or {})
+            lst.update(theme=name, themeChosen=True)
+            job.input = {**(job.input or {}), "listicle": lst}
+            s.commit()
+        return f"🎨 테마: {themes_domain.label(cat, name)} 로 만듭니다 ({job_id})"
 
     def _news_command(self, arg: str) -> None:
         """/news: 새 글 모아 평가해 보내기, /news 더: 다음 후보, /news <GeekNews 주소>: 그 글을 평가해 보내기"""

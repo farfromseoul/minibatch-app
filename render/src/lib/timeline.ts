@@ -2,6 +2,8 @@
 // render-worker 는 이 파일만 읽는다. 렌더링 전에 여기서 거르면 몇 분짜리 렌더가 중간에 깨지지 않는다.
 // 이 파일은 JSX 를 쓰지 않는다: Node 테스트(node --test)가 바로 불러온다.
 
+import { LISTICLE_THEME_NAMES } from "../listicle/themes/names.ts";
+
 export type AnimationPreset = "pop" | "fade" | "sequential" | "draw";
 
 export type TemplateVisual = { type: "template"; component: string; props: Record<string, unknown> };
@@ -45,7 +47,7 @@ export const ICONS = ["search", "memory", "shield", "bolt", "clock", "code", "ch
   "chart", "sparkles", "book", "gear"] as const;
 const SECTION_KINDS = ["hook", "item", "recap", "outro"];
 /** 목록형 장면은 목록형 테마에서만 그린다 (다른 스타일의 장면 등록부에는 없다) */
-export const LISTICLE_THEMES = ["nova"];
+export const LISTICLE_THEMES: readonly string[] = LISTICLE_THEME_NAMES;
 export const PRESETS: AnimationPreset[] = ["pop", "fade", "sequential", "draw"];
 export const MAX_FLOW_NODES = 6;
 

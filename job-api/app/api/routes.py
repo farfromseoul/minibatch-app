@@ -53,6 +53,7 @@ class ListicleBody(BaseModel):
     count: int = Field(default=5, ge=3, le=5)
     references: list[str] = Field(default_factory=list, max_length=5)
     items: list[str] = Field(default_factory=list, max_length=5)
+    theme: Optional[str] = Field(default=None, max_length=30)  # 화면 테마 (v1.3). 없으면 추천
 
 
 class StepBody(BaseModel):
@@ -250,9 +251,16 @@ def post_listicle(body: ListicleBody, request: Request) -> dict[str, Any]:
     if body.items and not 3 <= len(body.items) <= 5:
         raise ApiError(400, "invalid_items", "항목 이름은 3~5개")
     st = _st(request)
+    theme = None
+    if body.theme:
+        from app.core.category import load_category
+        from app.domain import themes
+        theme = themes.resolve(load_category(st.settings, "listicle"), body.theme)
+        if theme is None:
+            raise ApiError(400, "unknown_theme", f"없는 테마: {body.theme}")
     with st.db() as s:
-        job = create_listicle_job(s, st.settings, st.clock(), topic=body.topic, count=body.count,
-                                  references=body.references, items=[i[:60] for i in body.items])
+        job, _ = create_listicle_job(s, st.settings, st.clock(), topic=body.topic, count=body.count,
+                                     references=body.references, items=[i[:60] for i in body.items], theme=theme)
         s.commit()
         return job_summary(job)
 

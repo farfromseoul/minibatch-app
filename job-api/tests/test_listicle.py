@@ -307,14 +307,15 @@ class TopCommandTest(ListicleCase):
     def test_top_creates_listicle_job_with_references_and_items(self):
         msg = self.top("/top 클로드 스킬 중 진짜 쓸 것, 3\nhttps://github.com/anthropics/skills\n1. find-skills\n- superpowers\n- claude-mem")
 
-        self.assertIn("✅ 목록형 쇼츠 등록", msg)
+        self.assertTrue(any("✅ 목록형 쇼츠 등록" in m["text"] for m in self.tg.sent("sendMessage")), msg)
         (job,) = self.get("/jobs?status=PENDING").json()["items"]
         self.assertEqual(job["category"], "listicle")
         from app.db.models import Job
         with self.app.state.db() as s:
             stored = s.get(Job, job["id"]).input
-        self.assertEqual(stored["listicle"],
+        self.assertEqual({k: stored["listicle"][k] for k in ("count", "references", "items")},
                          {"count": 3, "references": ["https://github.com/anthropics/skills"], "items": NAMES})
+        self.assertIn(stored["listicle"]["theme"], ("nova", "paper", "terminal", "pop"))
 
     def test_bad_count_explains(self):
         msg = self.top("/top 쿠버네티스 명령어, 9")

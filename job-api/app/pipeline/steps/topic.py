@@ -52,7 +52,8 @@ class TopicStep:
             "videoEngine": "remotion",
             "resolution": {"width": 1080, "height": 1920},
             "fps": 30,
-            "theme": str(cat.get("theme") or "default"),  # 화면 스타일 (카테고리)
+            # 화면 스타일: 카테고리 기본, 목록형은 작업 입력의 테마(추천·버튼·직접, v1.3)
+            "theme": str(((job.get("input") or {}).get("listicle") or {}).get("theme") or cat.get("theme") or "default"),
             "publish": {"platform": "youtube", "visibility": "private"},
             "category": job["category"],
             "series": series,

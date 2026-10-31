@@ -68,6 +68,19 @@ class TelegramBot:
             raise TelegramError(f"sendVideo {res.status_code} {str(body.get('description', ''))[:200]}")
         return body.get("result")
 
+    def send_photo(self, path: Path, caption: str) -> Any:
+        """사진 한 장 (목록형 테마 미리보기, v1.3)"""
+        data: dict[str, Any] = {"chat_id": self.chat_id, "caption": caption[:1000]}
+        try:
+            with Path(path).open("rb") as fh:
+                res = self._http.post(f"{self._base}/sendPhoto", data=data, files={"photo": (Path(path).name, fh, "image/png")}, timeout=60)
+        except httpx.HTTPError as e:
+            raise TelegramError(f"sendPhoto 연결 실패: {type(e).__name__}") from None  # 주소(토큰)를 남기지 않는다
+        body = res.json() if res.content else {}
+        if res.status_code != 200 or not body.get("ok"):
+            raise TelegramError(f"sendPhoto {res.status_code} {str(body.get('description', ''))[:200]}")
+        return body.get("result")
+
     def get_updates(self, offset: int, timeout: int = 30) -> list[dict[str, Any]]:
         return self._call("getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["callback_query", "message"]},
                           timeout=timeout + 15) or []

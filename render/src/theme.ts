@@ -48,6 +48,12 @@ export const THEMES: Record<string, Theme> = {
   },
   // 목록형 쇼츠(D42). 2026-10-31 nova: 짙은 남색 + 민트·하늘·보라 그라데이션 (gold 는 참고 영상을 너무 닮아 바꿈).
   // 실제 색은 src/listicle/style.ts. 글꼴은 src/listicle/fonts.ts 가 Pretendard 를 읽는다
+  paper: { style: "listicle", background: "#F3EEE4", surface: "#FFFDF7", text: "#161514", muted: "#9A9286", accent: "#D9381E", accent2: "#1F3A93",
+           font: "'Noto Serif CJK KR', serif" },
+  terminal: { style: "listicle", background: "#050807", surface: "#08100C", text: "#D2FFE1", muted: "#4C7A5C", accent: "#39FF8C", accent2: "#FFB000",
+              font: "'Noto Sans Mono CJK KR', monospace" },
+  pop: { style: "listicle", background: "#FFF1DC", surface: "#FFFFFF", text: "#1B1B1F", muted: "#8C8C99", accent: "#FF5A5F", accent2: "#2F5BFF",
+         font: "'Pretendard Variable', sans-serif" },
   nova: {
     style: "listicle",
     background: "#0A0C14",
