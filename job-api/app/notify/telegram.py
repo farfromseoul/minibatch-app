@@ -45,10 +45,12 @@ class TelegramBot:
             raise TelegramError(f"{method} {res.status_code} {str(data.get('description', ''))[:200]}")
         return data.get("result")
 
-    def send(self, text: str, buttons: Optional[list[tuple[str, str]]] = None) -> Any:
+    def send(self, text: str, buttons: Optional[list] = None) -> Any:
+        """buttons: [(글, 값)] 이면 한 줄, [[(글, 값)], …] 이면 여러 줄 (테마 버튼 7개, v1.4)"""
         body: dict[str, Any] = {"chat_id": self.chat_id, "text": text, "disable_web_page_preview": True}
         if buttons:
-            body["reply_markup"] = {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in buttons]]}
+            rows = buttons if isinstance(buttons[0], list) else [buttons]
+            body["reply_markup"] = {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in row] for row in rows]}
         return self._call("sendMessage", body)
 
     def send_video(self, path: Path, caption: str, buttons: Optional[list[tuple[str, str]]] = None) -> Any:

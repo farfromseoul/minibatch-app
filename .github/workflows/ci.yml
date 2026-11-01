@@ -30,6 +30,9 @@ jobs:
       - name: Codex 중계기 테스트 (표준 라이브러리만)
         working-directory: llm-bridge
         run: python3 -m unittest -v test_codex_bridge
+      - name: 실습 리뷰 실험 실행기 테스트 (표준 라이브러리만)
+        working-directory: lab-runner
+        run: python3 -m unittest -v test_lab_runner
 
   images:
     needs: checks
@@ -53,6 +56,10 @@ jobs:
             dir: render
             tests: test:/app/test
             run: sh -c 'npx tsc -p . && node --test "test/**/*.test.mts"'
+          - name: lab
+            dir: lab
+            tests: test:/opt/lab/test
+            run: node --test /opt/lab/test/*.test.mjs
     env:
       IMAGE: ghcr.io/farfromseoul/minibatch-${{ matrix.name }}
     steps:

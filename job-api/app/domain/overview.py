@@ -58,7 +58,7 @@ def job_label(s: Session, job: Job) -> str:
         if run is not None and run.kind == "quota":
             return f"⏳ {STEP_KO.get(run.step, run.step)} 한도 대기 · 다음 시도 {kst(run.retry_at)}"
         if run is not None and run.kind == "blocked":
-            return f"⏳ 앞 화를 기다림: {run.error or ''}"
+            return f"⏳ 기다림: {run.error or ''}"
         return f"⏳ 기다림: {job.error_summary or ''}"
     if st == "FAILED":
         return f"🔴 실패 ({step} 단계): {(job.error_summary or '')[:120]}"

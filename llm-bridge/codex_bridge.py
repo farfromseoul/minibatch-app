@@ -1,11 +1,17 @@
-"""Codex 중계기: OpenAI 호환 /v1/chat/completions 를 `codex exec`(ChatGPT 로그인)로 답한다 (아키텍처 D32, 2026-10-18).
+"""LLM 중계기: OpenAI 호환 /v1/chat/completions 를 `codex exec`(ChatGPT 로그인) 또는 `claude -p`(Claude 구독 로그인)로 답한다
+(아키텍처 D32 2026-10-18, 엔진 교체 목록형 v1.4 L-D14 2026-11-01).
+
+- 엔진: BRIDGE_ENGINE=codex|claude (기본 codex), 요청 이름별로 BRIDGE_ENGINE_BY_SCHEMA=research=claude,…
+- 웹 검색: BRIDGE_SEARCH_SCHEMAS 의 요청 이름(기본 research)에만 켠다. codex 는 `--search`, claude 는 WebSearch·WebFetch 도구
 
 job-api 는 LM Studio 를 부르던 그대로 이 주소를 부른다(providers.yaml 의 제공자만 바꿈 → 되돌리기도 한 줄).
 - 맥 위에서 돈다: ChatGPT 로그인 정보(~/.codex)가 맥에 있다. 컨테이너가 아니다.
 - 표준 라이브러리만 쓴다(맥 기본 python3, 3.9).
 - codex 가 실패하면(사용량 한도, 오류, JSON 아님) 원래 요청을 그대로 로컬 LLM 에 넘긴다. 대체 주소가 없으면 429(일시적 실패).
 - 한 번에 하나만 (구독 한도, 맥 메모리).
-- OPENAI_API_KEY 를 지운 환경으로 codex 를 실행한다: 있으면 요금제가 아니라 API 종량 과금이 될 수 있다.
+- OPENAI_API_KEY 를 지운 환경으로 codex 를, ANTHROPIC_API_KEY 를 지운 환경으로 claude 를 실행한다: 있으면 요금제가 아니라 API 종량 과금이 될 수 있다.
+- claude 는 `--bare` 를 쓰지 않는다(구독 로그인을 읽지 않는다, 공식 문서). 대신 --restricted(설정 파일·코드 실행 도구 끔),
+  --strict-mcp-config(MCP 없음), --tools ""(도구 없음), --no-session-persistence, 빈 임시 폴더에서 돈다.
 
 실행: python3 codex_bridge.py  (환경 변수는 Config.from_env 참고)
 """
@@ -29,6 +35,11 @@ log = logging.getLogger("codex-bridge")
 
 INSTRUCTION = ("도구, 셸 명령, 파일 읽기·쓰기를 하지 말고, 아래 지시와 요청에 대한 최종 답만 "
                "주어진 JSON 스키마 형식으로 하라.")
+SEARCH_INSTRUCTION = ("웹 검색만 쓸 수 있다. 셸 명령·파일 읽기·쓰기는 하지 말고, 검색으로 확인한 내용으로 아래 요청에 답한 뒤 "
+                      "최종 답을 주어진 JSON 스키마 형식으로 하라.")
+CLAUDE_SYSTEM = "너는 요청에 JSON 으로만 답하는 도우미다. 코드 작업·파일 작업을 하지 않는다."
+ENGINES = ("codex", "claude")
+CLAUDE_SEARCH_TOOLS = "WebSearch,WebFetch"
 
 
 @dataclass
@@ -42,6 +53,22 @@ class Config:
     # 요청 스키마 이름(script, scenes, visual_queries …) → Codex 추론 강도(low|medium|high).
     # 규칙대로 고르는 일은 low 로 사용량을 줄인다 (2026-10-19). 없는 이름은 Codex 기본값
     effort: dict = field(default_factory=dict)
+    # 엔진 교체 (v1.4, 2026-11-01)
+    engine: str = "codex"
+    engine_by_schema: dict = field(default_factory=dict)
+    search_schemas: set = field(default_factory=lambda: {"research"})
+    claude_bin: str = "claude"
+    claude_model: str = ""         # 비우면 Claude Code 기본 모델
+    claude_timeout_sec: float = 600
+    claude_effort: dict = field(default_factory=dict)  # 요청 이름 → low|medium|high|xhigh|max
+
+    def __post_init__(self):
+        for name in [self.engine, *self.engine_by_schema.values()]:
+            if name not in ENGINES:
+                raise ValueError(f"엔진은 {'|'.join(ENGINES)} 중 하나: {name}")
+
+    def engine_for(self, schema_name: str) -> str:
+        return self.engine_by_schema.get(schema_name, self.engine)
 
     @classmethod
     def from_env(cls, env=None) -> "Config":
@@ -50,7 +77,13 @@ class Config:
                    fallback_url=e.get("FALLBACK_URL", ""), fallback_model=e.get("FALLBACK_MODEL", ""),
                    timeout_sec=float(e.get("CODEX_TIMEOUT_SEC", "600")),
                    fallback_timeout_sec=float(e.get("FALLBACK_TIMEOUT_SEC", "600")),
-                   effort=_parse_effort(e.get("CODEX_EFFORT", "")))
+                   effort=_parse_effort(e.get("CODEX_EFFORT", "")),
+                   engine=e.get("BRIDGE_ENGINE", "codex").strip() or "codex",
+                   engine_by_schema=_parse_effort(e.get("BRIDGE_ENGINE_BY_SCHEMA", "")),
+                   search_schemas={x.strip() for x in e.get("BRIDGE_SEARCH_SCHEMAS", "research").split(",") if x.strip()},
+                   claude_bin=e.get("CLAUDE_BIN", "claude"), claude_model=e.get("CLAUDE_MODEL", ""),
+                   claude_timeout_sec=float(e.get("CLAUDE_TIMEOUT_SEC", "600")),
+                   claude_effort=_parse_effort(e.get("CLAUDE_EFFORT", "")))
 
 
 def _now() -> str:
@@ -127,8 +160,15 @@ def codex_env() -> dict:
     return env
 
 
-def _prompt(messages: list) -> str:
-    parts = [INSTRUCTION]
+def claude_env() -> dict:
+    env = dict(os.environ)
+    for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+        env.pop(k, None)
+    return env
+
+
+def _prompt(messages: list, search: bool = False) -> str:
+    parts = [SEARCH_INSTRUCTION if search else INSTRUCTION]
     for m in messages:
         role = {"system": "지시", "user": "요청", "assistant": "앞선 답"}.get(m.get("role"), m.get("role"))
         parts.append(f"[{role}]\n{m.get('content', '')}")
@@ -137,7 +177,7 @@ def _prompt(messages: list) -> str:
 
 def _classify(stderr: str) -> str:
     low = stderr.lower()
-    if "usage limit" in low or "rate limit" in low:
+    if "usage limit" in low or "rate limit" in low or "limit reached" in low:
         return "usage_limit"
     if "log in" in low or "login" in low or "unauthorized" in low:
         return "not_logged_in"
@@ -154,22 +194,28 @@ class Bridge:
         self.last_success_at: Optional[str] = None
         self.last_failure_at: Optional[str] = None
         self.last_error: Optional[str] = None
+        self.last_engine: Optional[str] = None
+        self.last_cost_usd: Optional[float] = None
 
     def health(self) -> dict:
-        return {"status": "ok", "lastFallbackReason": self.last_fallback_reason,
+        return {"status": "ok", "engine": self.cfg.engine, "engineBySchema": self.cfg.engine_by_schema,
+                "lastEngine": self.last_engine, "lastCostUsd": self.last_cost_usd, "lastFallbackReason": self.last_fallback_reason,
                 "consecutiveFailures": self.consecutive_failures, "lastSuccessAt": self.last_success_at,
                 "lastFailureAt": self.last_failure_at, "lastError": self.last_error}
 
     def chat(self, body: dict) -> dict:
         with self._lock:
+            name = ((body.get("response_format") or {}).get("json_schema") or {}).get("name", "")
+            engine = self.cfg.engine_for(name)
+            self.last_engine = engine
             try:
-                res = self._codex(body)
+                res = self._claude(body) if engine == "claude" else self._codex(body)
             except BridgeError as e:
                 self.consecutive_failures += 1
                 self.last_failure_at, self.last_error = _now(), e.message[:300]
                 if not self.cfg.fallback_url:
                     raise
-                log.warning("codex 실패(%s) → 로컬 LLM 으로 (연속 %d번)", e.message[:200], self.consecutive_failures)
+                log.warning("%s 실패(%s) → 로컬 LLM 으로 (연속 %d번)", engine, e.message[:200], self.consecutive_failures)
                 self.last_fallback_reason = e.message.split(":", 1)[0]
                 return self._fallback(body)
             self.consecutive_failures, self.last_success_at = 0, _now()
@@ -178,13 +224,16 @@ class Bridge:
     def _codex(self, body: dict) -> dict:
         rf = body.get("response_format") or {}
         schema = (rf.get("json_schema") or {}).get("schema") or {"type": "object"}
-        effort = self.cfg.effort.get((rf.get("json_schema") or {}).get("name", ""))
+        name = (rf.get("json_schema") or {}).get("name", "")
+        effort = self.cfg.effort.get(name)
+        search = name in self.cfg.search_schemas
         with tempfile.TemporaryDirectory(prefix="codex-bridge-") as tmp:
             schema_path, out_path, work = (os.path.join(tmp, n) for n in ("schema.json", "answer.json", "work"))
             os.mkdir(work)
             with open(schema_path, "w", encoding="utf-8") as f:
                 json.dump(strict_schema(schema), f, ensure_ascii=False)
-            cmd = [self.cfg.codex_bin, "exec", "--ephemeral", "--skip-git-repo-check", "-s", "read-only",
+            # --search 는 codex 최상위 옵션이라 exec 앞에 둔다 (codex-cli 0.163.0 --help. exec 뒤에 두면 인자 오류)
+            cmd = [self.cfg.codex_bin, *(["--search"] if search else []), "exec", "--ephemeral", "--skip-git-repo-check", "-s", "read-only",
                    "-C", work, "--color", "never", "--output-schema", schema_path, "-o", out_path]
             if self.cfg.codex_model:
                 cmd += ["-m", self.cfg.codex_model]
@@ -193,7 +242,7 @@ class Bridge:
             cmd.append("-")
             started = time.time()
             try:
-                p = subprocess.run(cmd, input=_prompt(body.get("messages") or []), capture_output=True, text=True,
+                p = subprocess.run(cmd, input=_prompt(body.get("messages") or [], search), capture_output=True, text=True,
                                    timeout=self.cfg.timeout_sec, env=codex_env())
             except subprocess.TimeoutExpired:
                 raise BridgeError(429, f"timeout: codex {self.cfg.timeout_sec}초 초과")
@@ -210,6 +259,59 @@ class Bridge:
                  (rf.get("json_schema") or {}).get("name", "-"), effort or "기본")
         self.last_fallback_reason = None
         return {"id": f"codex-{int(started)}", "object": "chat.completion", "model": "codex",
+                "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": text}}],
+                "usage": {}}
+
+    def _claude(self, body: dict) -> dict:
+        """claude -p 한 번. 답은 --output-format json 결과의 structured_output (없으면 실패 → 대체)"""
+        rf = body.get("response_format") or {}
+        schema = (rf.get("json_schema") or {}).get("schema") or {"type": "object"}
+        name = (rf.get("json_schema") or {}).get("name", "")
+        search = name in self.cfg.search_schemas
+        effort = self.cfg.claude_effort.get(name)
+        cmd = [self.cfg.claude_bin, "-p", "--output-format", "json",
+               "--json-schema", json.dumps(strict_schema(schema), ensure_ascii=False),
+               "--restricted", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands",
+               "--permission-mode", "dontAsk", "--system-prompt", CLAUDE_SYSTEM]
+        if search:
+            cmd += ["--tools", CLAUDE_SEARCH_TOOLS, "--allowedTools", CLAUDE_SEARCH_TOOLS]
+        else:
+            cmd += ["--tools", ""]
+        if self.cfg.claude_model:
+            cmd += ["--model", self.cfg.claude_model]
+        if effort:
+            cmd += ["--effort", effort]
+        started = time.time()
+        with tempfile.TemporaryDirectory(prefix="claude-bridge-") as work:
+            try:
+                p = subprocess.run(cmd, input=_prompt(body.get("messages") or [], search), capture_output=True, text=True,
+                                   timeout=self.cfg.claude_timeout_sec, env=claude_env(), cwd=work)
+            except subprocess.TimeoutExpired:
+                raise BridgeError(429, f"timeout: claude {self.cfg.claude_timeout_sec}초 초과")
+        try:
+            out = json.loads(p.stdout or "")
+        except ValueError:
+            out = None
+        if not isinstance(out, dict):
+            tail = (p.stderr or p.stdout or "")[-500:]
+            raise BridgeError(429, f"{_classify(tail)}: {tail.strip()}")
+        self.last_cost_usd = out.get("total_cost_usd")
+        if p.returncode != 0 or out.get("is_error"):
+            msg = str(out.get("result") or p.stderr or "")[-500:]
+            raise BridgeError(429, f"{_classify(msg)}: {msg.strip()}")
+        data = out.get("structured_output")
+        try:
+            if isinstance(data, str):
+                data = json.loads(data)
+            if not isinstance(data, dict):
+                raise ValueError
+            text = json.dumps(decode_free_objects(schema, data), ensure_ascii=False)
+        except ValueError:
+            raise BridgeError(429, "invalid_output: claude 답에 structured_output 이 없다")
+        log.info("claude 답 %.1f초 (%s, 검색 %s, 비용 표시 %s)", time.time() - started, name or "-", "켬" if search else "끔",
+                 out.get("total_cost_usd"))
+        self.last_fallback_reason = None
+        return {"id": f"claude-{int(started)}", "object": "chat.completion", "model": "claude",
                 "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": text}}],
                 "usage": {}}
 
@@ -265,7 +367,9 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     host, port = os.environ.get("BRIDGE_HOST", "127.0.0.1"), int(os.environ.get("BRIDGE_PORT", "1235"))
     cfg = Config.from_env()
-    log.info("codex 중계기 %s:%d, codex=%s, 대체=%s, 추론 강도=%s", host, port, cfg.codex_bin, cfg.fallback_url or "없음", cfg.effort or "기본")
+    log.info("LLM 중계기 %s:%d, 엔진=%s (요청별 %s), 검색=%s, codex=%s, claude=%s, 대체=%s, 추론 강도=%s/%s", host, port, cfg.engine,
+             cfg.engine_by_schema or "없음", sorted(cfg.search_schemas), cfg.codex_bin, cfg.claude_bin, cfg.fallback_url or "없음",
+             cfg.effort or "기본", cfg.claude_effort or "기본")
     make_server(Bridge(cfg), host, port).serve_forever()
 
 

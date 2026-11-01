@@ -40,6 +40,16 @@ def upload_blocker(s: Session, job: Job) -> Optional[str]:
     return f"{n}화가 아직 업로드되지 않았다. {n}화를 올린 뒤에 {job.episode_number}화를 올린다 (화 순서)"
 
 
+def job_blocker(s: Session, job: Job) -> Optional[str]:
+    """기다림(blocked)으로 멈춘 작업이 아직 기다려야 하는 이유. 풀렸으면 None → n8n 이 그 단계를 다시 요청한다"""
+    inp = job.input or {}
+    if job.current_step == "lab":  # 실습 리뷰 계획 승인 (D46)
+        return None if (inp.get("review") or {}).get("planApproved") else "실험 계획 승인 대기 (텔레그램 [실험 시작])"
+    if job.current_step == "upload" and inp.get("uploadApproval") and not inp.get("uploadApproved"):
+        return "업로드 승인 대기 (텔레그램 [업로드 승인])"
+    return upload_blocker(s, job)
+
+
 def _last_run(s: Session, job: Job) -> Optional[StepRun]:
     return s.scalar(select(StepRun).where(StepRun.job_id == job.id, StepRun.step == job.current_step,
                                           StepRun.superseded.is_(False)).order_by(StepRun.attempt.desc()))
@@ -56,7 +66,7 @@ def _wait_reason(s: Session, job: Job, now: datetime) -> Optional[str]:
         if retry_at > now:
             return f"업로드 한도 대기, {run.retry_at} 이후 다시"
     if run.kind == "blocked":
-        return upload_blocker(s, job)
+        return job_blocker(s, job)
     return None
 
 
@@ -64,7 +74,7 @@ def next_job(s: Session, now: datetime) -> dict[str, Any]:
     """이어 할 작업 하나. 기다리는 이유가 남은 작업은 건너뛴다. 없으면 jobId 없음 → n8n 이 새 작업을 만든다"""
     skipped = []
     # 고른 IT 뉴스를 먼저 (D40: 늦으면 시의성을 잃는다), 그다음 운영자가 /top 으로 요청한 목록형(D42). 그다음 만든 순서
-    first = case((Job.category == "it-news", 0), (Job.category == "listicle", 1), else_=2)
+    first = case((Job.category == "it-news", 0), (Job.category.in_(("listicle", "hands-on")), 1), else_=2)
     for job in s.scalars(select(Job).where(Job.status.in_(RUNNABLE)).order_by(first, Job.created_at, Job.id)):
         reason = _wait_reason(s, job, now)
         if reason is None:

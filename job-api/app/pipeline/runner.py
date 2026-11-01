@@ -31,7 +31,8 @@ class Runner:
     def __init__(self, *, settings, db: Callable[[], Session], pipeline: list[str], steps: dict[str, Step],
                  executor: Callable[[Callable[[], None]], None], notify: Callable[[str, dict], None],
                  clock: Callable[[], datetime], providers: Any = None,
-                 on_review: Optional[Callable[[str], None]] = None):
+                 on_review: Optional[Callable[[str], None]] = None,
+                 on_blocked: Optional[Callable[[str, str], None]] = None):
         self.settings = settings
         self.providers = providers
         self.db = db
@@ -41,6 +42,7 @@ class Runner:
         self.notify = notify
         self.clock = clock
         self.on_review = on_review  # 작업이 REVIEW 가 되면 부른다 (텔레그램 승인 버튼, D28)
+        self.on_blocked = on_blocked  # 단계가 기다림(blocked)으로 멈추면 부른다 (실습 리뷰 계획·업로드 승인 버튼, D46)
         self._lock = threading.Lock()  # 규칙 2: 한 번에 한 단계 (메모리 예산, D4)
         self._idle = threading.Event()
         self._idle.set()
@@ -189,6 +191,11 @@ class Runner:
                 self.on_review(ctx.job_id)
             except Exception:  # 알림 실패가 단계 결과를 바꾸지 않는다
                 log.warning("검토 대기 알림 실패 %s", ctx.job_id)
+        if result.get("status") == "failed" and result.get("kind") == "blocked" and self.on_blocked is not None:
+            try:
+                self.on_blocked(ctx.job_id, ctx.step)
+            except Exception:
+                log.warning("기다림 알림 실패 %s %s", ctx.job_id, ctx.step)
         if resume_url:
             try:
                 self.notify(resume_url, result)

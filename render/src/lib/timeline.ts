@@ -41,7 +41,8 @@ export type Timeline = {
 };
 
 export const LISTICLE_TEMPLATES = ["LHookClaim", "LHookReveal", "LItemCard", "LChat", "LSteps", "LBeforeAfter", "LTerminal",
-  "LStat", "LIcon", "LCompare", "LRecap", "LOutro"] as const;
+  "LStat", "LIcon", "LCompare", "LRecap", "LOutro", "LWalkthrough", "LArtifact", "LVerdict"] as const;
+export const WALK_KINDS = ["terminal", "code", "chat", "settings"] as const;
 export const TEMPLATES = ["TitleReveal", "FlowDiagram", "ComparisonCards", "NeuralNetwork", "SummaryScene", ...LISTICLE_TEMPLATES] as const;
 export const ICONS = ["search", "memory", "shield", "bolt", "clock", "code", "chat", "check", "warning", "lock", "globe", "terminal",
   "chart", "sparkles", "book", "gear"] as const;
@@ -50,6 +51,8 @@ const SECTION_KINDS = ["hook", "item", "recap", "outro"];
 export const LISTICLE_THEMES: readonly string[] = LISTICLE_THEME_NAMES;
 export const PRESETS: AnimationPreset[] = ["pop", "fade", "sequential", "draw"];
 export const MAX_FLOW_NODES = 6;
+/** 목록형 항목 수 상한 (v1.4: 1~10, job-api listicle.count) */
+export const MAX_ITEMS = 10;
 
 const isInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v);
 const isStr = (v: unknown): v is string => typeof v === "string" && v.trim().length > 0;
@@ -75,8 +78,8 @@ function checkProps(component: string, p: Record<string, any>, where: string): s
       need(isStr(p.kicker) && isStr(p.claim) && optStr(p.claimNote) && optStr(p.aside), "는 {kicker, claim, claimNote?, aside?}");
       break;
     case "LHookReveal":
-      need(isStr(p.kicker) && isStr(p.headline) && optStr(p.highlight) && isInt(p.count) && p.count >= 2 && p.count <= 7,
-        "는 {kicker, headline, highlight?, count 2~7}");
+      need(isStr(p.kicker) && isStr(p.headline) && optStr(p.highlight) && isInt(p.count) && p.count >= 1 && p.count <= MAX_ITEMS,
+        `는 {kicker, headline, highlight?, count 1~${MAX_ITEMS}}`);
       break;
     case "LItemCard":
       need(isInt(p.number) && p.number >= 1 && isStr(p.name) && optStr(p.meta) && optStr(p.tagline) && optStr(p.badge),
@@ -108,12 +111,27 @@ function checkProps(component: string, p: Record<string, any>, where: string): s
         "는 {left: {title, points[1~3]}, right: {…}, winner?: left|right}");
       break;
     case "LRecap":
-      need(isStr(p.title) && optStr(p.subtitle) && Array.isArray(p.items) && p.items.length >= 1 && p.items.length <= 7
+      need(isStr(p.title) && optStr(p.subtitle) && Array.isArray(p.items) && p.items.length >= 1 && p.items.length <= MAX_ITEMS
         && p.items.every((it: any) => isObj(it) && isStr(it.name) && optStr(it.note) && optStr(it.tag)),
-        "는 {title, subtitle?, items[1~7]: {name, note?, tag?}}");
+        `는 {title, subtitle?, items[1~${MAX_ITEMS}]: {name, note?, tag?}}`);
       break;
     case "LOutro":
       need(isStr(p.title) && optStr(p.subtitle), "는 {title, subtitle?}");
+      break;
+    case "LArtifact":
+      need(isStr(p.image) && /^lab\/t[1-3]\/previews\/[A-Za-z0-9._-]+\.png$/.test(p.image) && isSafeRelative(p.image)
+        && isStr(p.title) && typeof p.ok === "boolean" && optStr(p.meta), "는 {image(lab/t1/previews/….png), title, ok, meta?}");
+      break;
+    case "LVerdict":
+      need(isStr(p.title) && strList(p.pros, 1, 3) && (Array.isArray(p.cons) && p.cons.length <= 2 && p.cons.every(isStr))
+        && isStr(p.forWhom) && optStr(p.meta), "는 {title, pros[1~3], cons[0~2], forWhom, meta?}");
+      break;
+    case "LWalkthrough":
+      need((WALK_KINDS as readonly string[]).includes(p.kind) && typeof p.title === "string"
+        && Array.isArray(p.steps) && p.steps.length >= 1 && p.steps.length <= 3
+        && p.steps.every((st: any) => isObj(st) && isStr(st.input) && Array.isArray(st.output) && st.output.length <= 4 && st.output.every(isStr))
+        && (p.beats === undefined || (Array.isArray(p.beats) && p.beats.every((b: unknown) => isInt(b) && b >= 0))),
+        `는 {kind(${WALK_KINDS.join("|")}), title, steps[1~3]: {input, output[0~4]}, beats?: 프레임[]}`);
       break;
     case "TitleReveal":
       if (!isStr(p.title)) e.push(`${where}: title 필요`);
@@ -231,8 +249,8 @@ export function validateTimeline(t: unknown): string[] {
   }
   if (t.tracker !== undefined) {
     const items: any[] = isObj(t.tracker) && Array.isArray(t.tracker.items) ? t.tracker.items : [];
-    if (items.length < 1 || items.length > 7 || !items.every((it) => isObj(it) && isStr(it.name) && optStr(it.meta))) {
-      e.push("tracker 는 {items[1~7]: {name, meta?}}");
+    if (items.length < 1 || items.length > MAX_ITEMS || !items.every((it) => isObj(it) && isStr(it.name) && optStr(it.meta))) {
+      e.push(`tracker 는 {items[1~${MAX_ITEMS}]: {name, meta?}}`);
     }
   }
   if (t.bgm !== null && t.bgm !== undefined) e.push("bgm 은 아직 지원하지 않는다 (null)");

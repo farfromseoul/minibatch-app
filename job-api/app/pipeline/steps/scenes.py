@@ -78,6 +78,10 @@ class ScenesStep:
             from .listicle import run_scenes
             run_scenes(ctx, script, job, cat)
             return
+        if job.get("format") == "review":  # 실습 리뷰 (D46): 장면은 모두 실험 기록으로 코드가
+            from .handson import run_scenes as run_review_scenes
+            run_review_scenes(ctx, script, job, cat)
+            return
         templates = [t for t in (cat.get("templates") or [t for t in TEMPLATES if t not in LISTICLE_TEMPLATES]) if t in TEMPLATES]
         if not templates:
             raise StepFailure("deterministic", "카테고리에 쓸 수 있는 템플릿이 없다")

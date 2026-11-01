@@ -62,3 +62,37 @@ export function countUp(value: string, p: number): string {
   const eased = 1 - Math.pow(1 - Math.min(1, Math.max(0, p)), 3);
   return (target * eased).toFixed(decimals);
 }
+
+export type WalkStep = { input: string; output: string[] };
+export type WalkTiming = { typeFrom: number; typeTo: number; outFrom: number[] };
+
+/** 실습 장면(LWalkthrough, v1.4) 단계별 시각 (장면 기준 프레임). 단계 j 는 그 문장이 시작할 때(beats[j]) 타자를 시작해
+ *  다음 단계 문장 전까지 출력을 다 띄운다. beats 가 없으면 장면을 단계 수로 고르게 나눈다 */
+export function walkSchedule(steps: WalkStep[], beats: number[] | undefined, duration: number): WalkTiming[] {
+  const n = steps.length;
+  const starts = steps.map((_, j) => (beats && beats[j] !== undefined ? beats[j] : Math.round((duration * j) / n)));
+  return steps.map((st, j) => {
+    const from = Math.min(duration - 1, starts[j] + 4);
+    const end = Math.max(from + 2, j + 1 < n ? starts[j + 1] + 4 : duration);
+    const room = end - from;
+    const typeTo = from + Math.max(2, Math.min(Math.round([...st.input].length * 1.5), Math.round(room * 0.45)));
+    const span = Math.max(1, end - typeTo - 6);
+    const outFrom = st.output.map((_, i) => Math.min(end - 1, typeTo + 4 + Math.round((span * 0.6 * i) / Math.max(1, st.output.length))));
+    return { typeFrom: from, typeTo, outFrom };
+  });
+}
+
+export type Cell = { x: number; y: number; w: number; h: number };
+
+/** 정리 목록 칸 (v1.4: 1~10개). 7개부터 두 줄(왼쪽 위→아래, 다음 오른쪽)로 나눠 글자가 작아지지 않게 */
+export function recapCells(n: number, area: { x: number; y: number; w: number; h: number }, gap = 18, maxH = 118): Cell[] {
+  const cols = n >= 7 ? 2 : 1;
+  const rows = Math.ceil(n / cols);
+  const w = (area.w - gap * (cols - 1)) / cols;
+  const h = Math.min(maxH, Math.floor((area.h - gap * (rows - 1)) / rows));
+  return Array.from({ length: n }, (_, i) => {
+    const c = Math.floor(i / rows);
+    const r = i % rows;
+    return { x: area.x + c * (w + gap), y: area.y + r * (h + gap), w, h };
+  });
+}

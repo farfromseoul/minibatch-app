@@ -104,7 +104,8 @@ def quota_retry_at(reason: Optional[str], now: Optional[datetime] = None) -> str
 
 
 def _description(script: dict[str, Any], playlist_id: Optional[str], credits: Optional[list] = None,
-                 news: Optional[dict[str, Any]] = None, listicle: Optional[dict[str, Any]] = None) -> str:
+                 news: Optional[dict[str, Any]] = None, listicle: Optional[dict[str, Any]] = None,
+                 review: Optional[dict[str, Any]] = None) -> str:
     parts = [p for p in (script.get("hook"), script.get("summary")) if p]
     tags = " ".join(h if h.startswith("#") else f"#{h}" for h in script.get("hashtags", []))
     if tags:
@@ -122,6 +123,12 @@ def _description(script: dict[str, Any], playlist_id: Optional[str], credits: Op
     sources = [x.get("url") for x in (listicle or {}).get("sources") or [] if x.get("url")]
     if sources:  # 목록형 참고 자료 (D42)
         parts.append("참고:\n" + "\n".join(sources))
+    if review:  # 실습 리뷰 (D46): 실제 실행 고지와 출처
+        parts.append(f"🧪 {review.get('toolLabel', 'AI 에이전트')} 를 인터넷이 막힌 격리 환경에서 실제로 실행한 결과입니다"
+                     + (f" ({review['ranAt']})" if review.get("ranAt") else ""))
+        rs = [x.get("url") for x in review.get("sources") or [] if x.get("url")]
+        if rs:
+            parts.append("참고:\n" + "\n".join(rs))
     return "\n\n".join(parts)  # 고지 문구는 연결부(upload_video)가 끝에 붙인다
 
 
@@ -140,6 +147,9 @@ class UploadStep:
             raise StepFailure(e.kind, e.message, retry_at=quota_retry_at(e.reason) if e.kind == "quota" else None) from e
 
     def _run(self, ctx: StepContext) -> None:
+        inp = ctx.job.get("input") or {}
+        if inp.get("uploadApproval") and not inp.get("uploadApproved"):  # 실습 리뷰 (D46): 사람이 영상을 먼저 본다
+            raise StepFailure("blocked", "업로드 승인 대기 (텔레그램 [업로드 승인])")
         job = ctx.read_json("job.json")
         script = ctx.read_json("script.json")
         visuals = ctx.read_json("visuals.json")
@@ -181,7 +191,7 @@ class UploadStep:
         else:
             title = (f"{info['title']} {info['number']}화: {info['episodeTitle']}" if info
                      else (script.get("titleCandidates") or [job["topic"]])[0])
-            res = yt.upload_video(video, title=title, description=_description(script, playlist_id, visuals.get("credits"), job.get("news"), job.get("listicle")), disclosure=disclosure,
+            res = yt.upload_video(video, title=title, description=_description(script, playlist_id, visuals.get("credits"), job.get("news"), job.get("listicle"), job.get("review")), disclosure=disclosure,
                                   category_id=str(ycfg.get("category_id", "28")),
                                   tags=[h.lstrip("#") for h in script.get("hashtags", [])], synthetic=synthetic)
             video_id, replaces = res["id"], prev_video

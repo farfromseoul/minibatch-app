@@ -267,5 +267,138 @@ class HttpTest(BridgeCase):
         self.assertNotIn("OPENAI_API_KEY", env)  # 있으면 ChatGPT 요금제 대신 API 종량 과금이 될 수 있다
 
 
+
+# ---------- 엔진 교체 (목록형 v1.4 L25, 2026-11-01 사용자: codex 를 Claude Code 로, 언제든 바꿀 수 있게)
+
+def fake_claude(dirpath, *, structured=None, is_error=False, result="", code=0):
+    """받은 인자·stdin·환경을 기록하고 --output-format json 결과를 stdout 에 쓰는 가짜 claude"""
+    p = Path(dirpath) / "claude"
+    p.write_text(f"""#!/usr/bin/env python3
+import json, os, sys
+args = sys.argv[1:]
+stdin = sys.stdin.read()
+json.dump({{"args": args, "stdin": stdin, "cwd": os.getcwd(), "has_key": "ANTHROPIC_API_KEY" in os.environ}},
+          open({str(Path(dirpath) / 'call.json')!r}, "w"), ensure_ascii=False)
+out = {{"type": "result", "subtype": "error" if {is_error!r} else "success", "is_error": {is_error!r}, "result": {result!r},
+        "total_cost_usd": 0.0123}}
+structured = {structured!r}
+if structured is not None:
+    out["structured_output"] = structured
+print(json.dumps(out))
+sys.exit({code})
+""")
+    p.chmod(p.stat().st_mode | stat.S_IEXEC)
+    return p
+
+
+def body(name):
+    b = json.loads(json.dumps(BODY))
+    b["response_format"]["json_schema"]["name"] = name
+    return b
+
+
+class ClaudeEngineTest(BridgeCase):
+    def claude_bridge(self, **kw):
+        return self.bridge(self.dir / "no-codex", engine="claude", claude_bin=str(self.claude), **kw)
+
+    def test_answer_comes_from_claude_code_structured_output(self):
+        self.claude = fake_claude(self.dir, structured={"title": "클로드"})
+        b = self.claude_bridge()
+
+        self.res = b.chat(BODY)
+
+        self.assertEqual(self.call(), {"title": "클로드"})
+        rec = self.recorded()
+        args = rec["args"]
+        self.assertEqual(args[0], "-p")
+        for flag in ("--restricted", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands"):
+            self.assertIn(flag, args)
+        self.assertEqual(args[args.index("--output-format") + 1], "json")
+        self.assertEqual(args[args.index("--permission-mode") + 1], "dontAsk")
+        self.assertEqual(args[args.index("--tools") + 1], "")  # 검색이 아닌 요청은 도구 없이
+        self.assertNotIn("--bare", args)  # bare 는 구독 로그인을 쓰지 못한다
+        schema = json.loads(args[args.index("--json-schema") + 1])
+        self.assertEqual(schema["required"], ["title", "meta"])  # codex 와 같은 엄격 스키마
+        self.assertIn("RAG 대본", rec["stdin"])
+        self.assertIn("claude-bridge-", rec["cwd"])  # 빈 임시 폴더에서
+        self.assertEqual(self.res["model"], "claude")
+        self.assertEqual(FakeLocalLlm.calls, [])
+
+    def test_api_key_is_removed_for_claude(self):
+        self.claude = fake_claude(self.dir, structured={"title": "x"})
+        os.environ["ANTHROPIC_API_KEY"] = "test-not-secret"
+        try:
+            self.res = self.claude_bridge().chat(BODY)
+        finally:
+            del os.environ["ANTHROPIC_API_KEY"]
+        self.assertFalse(self.recorded()["has_key"])  # 있으면 구독 대신 API 종량 과금이 된다
+
+    def test_error_or_missing_structured_output_falls_back(self):
+        for kw in ({"is_error": True, "result": "Claude AI usage limit reached"}, {"structured": None, "result": "그냥 글"}):
+            self.claude = fake_claude(self.dir, **kw)
+            b = self.claude_bridge()
+            self.res = b.chat(BODY)
+            self.assertEqual(self.call(), {"title": "로컬"}, kw)
+        self.assertEqual(b.health()["lastFallbackReason"], "invalid_output")
+        self.assertEqual(b.health()["engine"], "claude")
+
+    def test_usage_limit_is_classified(self):
+        self.claude = fake_claude(self.dir, is_error=True, result="Claude AI usage limit reached|1760000000")
+        b = self.claude_bridge()
+        self.res = b.chat(BODY)
+        self.assertEqual(b.last_fallback_reason, "usage_limit")
+
+    def test_model_and_effort_for_claude(self):
+        self.claude = fake_claude(self.dir, structured={"title": "x"})
+        self.res = self.claude_bridge(claude_model="sonnet", claude_effort={"script": "high"}).chat(BODY)
+        args = self.recorded()["args"]
+        self.assertEqual(args[args.index("--model") + 1], "sonnet")
+        self.assertEqual(args[args.index("--effort") + 1], "high")
+
+    def test_search_schema_turns_on_web_tools_for_claude(self):
+        self.claude = fake_claude(self.dir, structured={"title": "x"})
+        self.res = self.claude_bridge().chat(body("research"))
+        args = self.recorded()["args"]
+        self.assertEqual(args[args.index("--tools") + 1], "WebSearch,WebFetch")
+        self.assertEqual(args[args.index("--allowedTools") + 1], "WebSearch,WebFetch")
+
+    def test_engine_per_schema_name(self):
+        self.claude = fake_claude(self.dir, structured={"title": "검색"})
+        codex = fake_codex(self.dir, answer='{"title": "codex"}')
+        b = self.bridge(codex, engine="codex", claude_bin=str(self.claude), engine_by_schema={"research": "claude"})
+        self.res = b.chat(body("research"))
+        self.assertEqual(self.call(), {"title": "검색"})
+        self.res = b.chat(BODY)
+        self.assertEqual(self.call(), {"title": "codex"})
+
+
+class CodexSearchTest(BridgeCase):
+    def test_search_schema_turns_on_codex_live_search(self):
+        b = self.bridge(fake_codex(self.dir, answer='{"title": "x"}'))
+        self.res = b.chat(body("research"))
+        args = self.recorded()["args"]
+        self.assertEqual(args[:2], ["--search", "exec"])  # --search 는 codex 최상위 옵션
+        self.res = b.chat(BODY)
+        self.assertEqual(self.recorded()["args"][0], "exec")
+
+
+class EngineConfigTest(unittest.TestCase):
+    def test_engine_settings_from_env(self):
+        cfg = codex_bridge.Config.from_env({"BRIDGE_ENGINE": "claude", "BRIDGE_ENGINE_BY_SCHEMA": "review=codex",
+                                            "BRIDGE_SEARCH_SCHEMAS": "research,topic", "CLAUDE_BIN": "/opt/claude",
+                                            "CLAUDE_MODEL": "opus", "CLAUDE_EFFORT": "script=high", "CLAUDE_TIMEOUT_SEC": "300"})
+        self.assertEqual((cfg.engine, cfg.engine_by_schema, cfg.search_schemas), ("claude", {"review": "codex"}, {"research", "topic"}))
+        self.assertEqual((cfg.claude_bin, cfg.claude_model, cfg.claude_effort, cfg.claude_timeout_sec),
+                         ("/opt/claude", "opus", {"script": "high"}, 300.0))
+
+    def test_defaults_keep_codex(self):
+        cfg = codex_bridge.Config.from_env({})
+        self.assertEqual((cfg.engine, cfg.search_schemas), ("codex", {"research"}))
+
+    def test_unknown_engine_is_rejected(self):
+        with self.assertRaises(ValueError):
+            codex_bridge.Config.from_env({"BRIDGE_ENGINE": "gemini"})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -63,7 +63,8 @@ class ReviewStep:
         numbered = "\n".join(f"{i}. {s}" for i, s in enumerate(sentences, start=1))
         news = job.get("news")
         series_facts = (((job.get("series") or {}).get("bible") or {}).get("facts")
-                        or (job.get("listicle") or {}).get("facts") or [])  # 사용자가 준 참고 자료 (2026-10-30, 목록형 D42)
+                        or (job.get("listicle") or {}).get("facts")
+                        or (job.get("review") or {}).get("facts") or [])  # 사용자가 준 참고 자료 (2026-10-30, 목록형 D42) · 실습 리뷰 조사(D46)
         if news:
             facts = ("\n원문 사실 목록(IT 뉴스, D40). 대본의 숫자·이름·날짜·주장이 이 목록과 다르거나 목록에 없으면 critical:\n"
                      + "\n".join(f"- {f}" for f in news["facts"]) + "\n")
@@ -72,6 +73,19 @@ class ReviewStep:
                      + "\n".join(f"- {f}" for f in series_facts) + "\n")
         else:
             facts = ""
+        demos = [(it["name"], it["demo"]) for it in ((script.get("listicle") or {}).get("items") or [])
+                 if (it.get("demo") or {}).get("kind", "none") != "none"]
+        if demos:  # 화면에 그대로 타이핑되는 명령 (목록형 v1.4 L22): 없는 명령·옵션을 지어내면 critical
+            facts += ("\n화면에 그대로 쳐 보이는 입력과 출력(항목별). 실제로 없는 명령·옵션·메뉴이거나 출력이 사실과 다르면 critical:\n"
+                      + "\n".join(f"- {name} ({d['kind']}): " + " / ".join(
+                          f"`{st['input']}`" + (f" → {' | '.join(st['output'])}" if st.get("output") else "") for st in d["steps"])
+                          for name, d in demos) + "\n")
+        if job.get("format") == "review" and ctx.path("evidence.json").exists():  # 실습 리뷰 (D46): 실험 기록과 다르면 치명
+            ev = ctx.read_json("evidence.json")
+            facts += ("\n실험 기록(실제로 실행한 결과). 대본이 이와 다르게 말하거나(성공·실패·시간·한 일·만든 파일) 기록에 없는 결과를 말하면 critical:\n"
+                      + "\n".join(f"- {t['goal']}: {'성공' if t['ok'] else '실패(' + t['status'] + ')'}, {t['seconds']}초, "
+                                   f"한 일: {' / '.join(s['input'] for s in t['steps'][:5])}, 파일: {', '.join(f['path'] for f in t['files'][:5])}"
+                                   for t in ev.get("tasks") or []) + "\n")
         messages, version = render_messages("review", topic=job["topic"], audience=cat.get("audience", ""), numbered=numbered,
                                             rules=", ".join(cat.get("review", {}).get("rules", ["사실 오류"])), facts=facts)
 

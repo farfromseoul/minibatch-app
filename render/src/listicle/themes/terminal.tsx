@@ -157,9 +157,11 @@ const HookReveal: React.FC<LSceneProps<{ kicker: string; headline: string; highl
         ) : props.headline}
       </div>
       {Array.from({ length: props.count }, (_, i) => {
-        const on = phase(frame, durationInFrames, 0.25 + i * 0.08, 0.27 + i * 0.08) > 0;
+        const step = 0.6 / Math.max(props.count, 6);  // 1~10개 (v1.4): 개수가 많으면 촘촘히
+        const on = phase(frame, durationInFrames, 0.25 + i * step, 0.27 + i * step) > 0;
+        const gap = Math.min(92, Math.floor(660 / props.count));
         return on ? (
-          <Line key={i} y={560 + i * 92} size={40} color={i === 0 ? GREEN : tokens.sub}>
+          <Line key={i} y={560 + i * gap} size={props.count > 7 ? 34 : 40} color={i === 0 ? GREEN : tokens.sub}>
             {`PID ${String(1000 + i * 17)}  ${pad2(i + 1)}  ${"▮".repeat(10 - i)}${"▯".repeat(i)}  ready`}
           </Line>
         ) : null;
@@ -195,10 +197,11 @@ const Recap: React.FC<LSceneProps<{ title: string; subtitle?: string; items: { n
       {props.subtitle ? <Line y={430} color={tokens.muted}># {props.subtitle}</Line> : null}
       {props.items.map((it, i) => {
         const on = phase(frame, durationInFrames, 0.18 + (0.4 * i) / n, 0.2 + (0.4 * i) / n) > 0;
+        const many = n >= 7;  // 1~10개 (v1.4): 7개부터 한 줄씩, 설명 줄은 뺀다
         return on ? (
-          <Line key={it.name + i} y={520 + i * 120} size={40} color={tokens.text}>
+          <Line key={it.name + i} y={520 + i * (many ? Math.floor(700 / n) : 120)} size={many ? 36 : 40} color={tokens.text}>
             <span style={{ color: GREEN }}>[x]</span> {pad2(i + 1)} <span style={{ color: GREEN, textShadow: glowText(0.6) }}>{it.name}</span>
-            <span style={{ color: tokens.muted, fontSize: 28 }}>{it.note ? `\n     ${it.note}` : ""}</span>
+            <span style={{ color: tokens.muted, fontSize: 28 }}>{it.note && !many ? `\n     ${it.note}` : ""}</span>
           </Line>
         ) : null;
       })}

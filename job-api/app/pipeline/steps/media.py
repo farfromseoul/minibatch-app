@@ -93,7 +93,7 @@ class TimelineStep:
         scenes, tts = ctx.read_json("scenes.json"), ctx.read_json("tts.json")
         target = job["targetDurationSec"]
         tol = int(job.get("durationToleranceSec") or 5)
-        if job.get("format") == "listicle":  # 목록형(D42): 쉼에 맞춘 구절·단어 자막, 앞뒤 무음 잘라 쉼, 쉼으로 길이 맞추기
+        if job.get("format") in ("listicle", "review"):  # 목록형(D42)·실습 리뷰(D46): 쉼에 맞춘 구절·단어 자막, 앞뒤 무음 잘라 쉼, 쉼으로 길이 맞추기
             from .listicle import fit_pacing, phrases_for
             phrases, spans = phrases_for(ctx, scenes, tts)
             t, scale = fit_pacing(scenes, tts, target=target, tol=tol, fps=job["fps"], theme=job["theme"], phrases=phrases,

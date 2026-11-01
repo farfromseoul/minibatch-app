@@ -1,0 +1,41 @@
+# 실습 리뷰 쇼츠 (메인 D46, 실습리뷰쇼츠 기획서·아키텍처). AI 도구의 새 기능을 격리된 실험 컨테이너에서 직접 돌려 보고,
+# 그 기록만으로 "무슨 기능·어떻게 썼나·무엇이 나왔나·누구에게 추천" 영상을 만든다. 텔레그램 /try 로 등록한다.
+# format: review 이면 topic(조사·계획) → lab(승인 뒤 실험) → script·scenes(기록 근거) 경로. 화면 틀·테마·자막은 목록형과 같다.
+key: hands-on
+title: 실습 리뷰 쇼츠 (직접 돌려 본 결과)
+format: review
+theme: noir
+upload_approval: true      # 업로드 전에 텔레그램으로 영상을 먼저 보내 [업로드 승인]을 받는다 (2026-11-01 사용자: 업로드 한도)
+target_duration_sec: 70    # review_video.duration 이 없을 때만
+duration_tolerance_sec: 8
+review_video:
+  tools: [claude]          # v1 은 Claude Code 만 (기획서 Q1)
+  max_tasks: 3
+  task_timeout_sec: 600
+  duration: {base: 30, per_task: 20}   # 목표 길이 = 30 + 20 × 과제 수 초
+tts:
+  speed: 0.93
+  speech_chars_per_sec: 7.5
+audience: 새로 나온 AI 도구 기능을 써 볼지 고민하는 개발자·직장인·학생
+listicle:
+  outro:
+    - {line: "직접 해 볼 만한지 판단에 도움이 됐길 바라요.", title: "직접 돌려 본 결과", subtitle: "다음 실험도 기대해 주세요"}
+script:
+  structure: "결과 먼저 첫마디 → 기능 소개 한 문장 → 과제마다: 시킨 말 → 실제로 한 일·결과 → 평가(좋은 점·아쉬운 점·추천 대상)"
+  forbidden:
+    - 실험 기록에 없는 결과·숫자·기능
+    - 실패를 성공처럼 말하기
+    - 과장·감탄 표현(혁명적, 미쳤다, 완벽하게, 무조건 등)
+    - 진행자의 개인 경험담
+  max_sentence_chars: 30
+review:
+  rules: [실험 기록과 다른 말(성공·실패·시간·한 일·파일), 기록에 없는 결과, 기능 설명이 조사 사실과 다름, 과장·낚시]
+  banned_words: ["미쳤", "혁명적", "완벽하게", "무조건", "100%"]
+templates: [LHookClaim, LHookReveal, LWalkthrough, LArtifact, LVerdict, LOutro]
+youtube:
+  category_id: "28"
+  disclosure: AI 에이전트가 격리된 환경에서 실제로 실행한 결과로 만들었고, 대본과 음성은 AI 도구로 만들었습니다
+  declare_synthetic: true
+voices:
+  supertonic: M1
+  melotts: KR

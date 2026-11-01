@@ -289,7 +289,7 @@ class ListicleCase(TelegramCase, MediaCase):
         super().setUp()
         for f in ("listicle.yaml", "it-news.yaml"):
             shutil.copy(CATS / f, self.settings.content_dir / "categories" / f)
-        FakeWorker.seconds = 3.1  # 3개 항목 15문장 → 약 55초
+        FakeWorker.seconds = 2.6  # 3개 항목 15문장 → 약 46초 (목표 22 + 8 × 3, v1.4)
 
     def make_providers(self):
         return FakeRegistry(self.llm, tts_url=self.url)
@@ -315,11 +315,11 @@ class TopCommandTest(ListicleCase):
             stored = s.get(Job, job["id"]).input
         self.assertEqual({k: stored["listicle"][k] for k in ("count", "references", "items")},
                          {"count": 3, "references": ["https://github.com/anthropics/skills"], "items": NAMES})
-        self.assertIn(stored["listicle"]["theme"], ("nova", "paper", "terminal", "pop"))
+        self.assertIn(stored["listicle"]["theme"], ("noir", "air", "slate", "nova", "paper", "terminal", "pop"))
 
     def test_bad_count_explains(self):
-        msg = self.top("/top 쿠버네티스 명령어, 9")
-        self.assertIn("항목 수는 3~5", msg)
+        msg = self.top("/top 쿠버네티스 명령어, 11")
+        self.assertIn("항목 수는 1~10", msg)
         self.assertEqual(self.get("/jobs").json()["items"], [])
 
     def test_help_lists_top(self):
@@ -374,7 +374,7 @@ class HookVarietyTest(ListicleCase):
 class ListicleProductionTest(ListicleCase):
     def test_chain_to_timeline_has_tracker_sections_and_word_captions(self):
         job_id = self.post("/listicle", {"topic": "클로드 스킬", "count": 3}).json()["id"]
-        target = ls.target_chars(58, 7.5, 3, len("저장해두고하나씩써보세요."))
+        target = ls.target_chars(46, 7.5, 3, len("저장해두고하나씩써보세요."))
         per = max(8, round(target / 14))
         self.llm.responses = [reply(per=per), {"issues": [], "scores": GOOD_SCORES, "verdict": "pass"}, VISUALS, VISUALS, VISUALS]
 
@@ -386,7 +386,7 @@ class ListicleProductionTest(ListicleCase):
 
         job = self.read(job_id, "job.json")
         self.assertEqual((job["format"], job["targetDurationSec"], job["durationToleranceSec"], job["theme"]),
-                         ("listicle", 58, 6, "nova"))
+                         ("listicle", 46, 6, "noir"))  # v1.4 기본 noir  # 22 + 8 × 3 (v1.4)
         prompt = [r for r in self.llm.requests if r["schema_name"] == "listicle_script"][0]["messages"][-1]["content"]
         self.assertIn("항목 수 N: 3", prompt)
         t = self.read(job_id, "timeline.json")
@@ -396,7 +396,7 @@ class ListicleProductionTest(ListicleCase):
         self.assertIn("LIcon", comps)  # 3번 항목의 없는 그림은 아이콘 장면으로
         self.assertEqual(comps[-1], "LOutro")
         self.assertTrue(all("words" in c for c in t["captions"]))
-        self.assertTrue(52 <= t["durationInFrames"] / 30 <= 64, t["durationInFrames"] / 30)
+        self.assertTrue(40 <= t["durationInFrames"] / 30 <= 52, t["durationInFrames"] / 30)
         tts = self.read(job_id, "tts.json")
         self.assertEqual(tts["speed"], 0.93)
         self.assertEqual([b.get("speed") for p, b in FakeWorker.received if p == "/synthesize"], [0.93])
@@ -425,11 +425,11 @@ class ListicleQcTest(unittest.TestCase):
         case.setUp()
         try:
             shutil.copy(CATS / "listicle.yaml", case.settings.content_dir / "categories" / "listicle.yaml")
-            case.analysis = good_analysis(durationSec=63.0)
+            case.analysis = good_analysis(durationSec=51.0)
             job_id = case.post("/listicle", {"topic": "터미널 도구", "count": 3}).json()["id"]
             case.run_until(job_id, "qc")
             qc = case.read(job_id, "qc.json")
             length = next(c for c in qc["checks"] if c["name"] == "length")
-            self.assertEqual((length["ok"], length["expected"]), (True, "52~64초"))
+            self.assertEqual((length["ok"], length["expected"]), (True, "40~52초"))  # 3개: 22 + 8 × 3 = 46초 (v1.4)
         finally:
             case.tearDown()

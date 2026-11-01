@@ -48,6 +48,13 @@ export const THEMES: Record<string, Theme> = {
   },
   // 목록형 쇼츠(D42). 2026-10-31 nova: 짙은 남색 + 민트·하늘·보라 그라데이션 (gold 는 참고 영상을 너무 닮아 바꿈).
   // 실제 색은 src/listicle/style.ts. 글꼴은 src/listicle/fonts.ts 가 Pretendard 를 읽는다
+  // v1.4 (2026-11-01) 미니멀 테마: 색 세 가지(바탕·글자·강조 하나). 실제 모양은 src/listicle/themes/minimal.tsx
+  noir: { style: "listicle", background: "#0C0C0D", surface: "#161618", text: "#F4F4F1", muted: "#6E6E6A", accent: "#FFD43B", accent2: "#FFD43B",
+          font: "'Pretendard Variable', sans-serif" },
+  air: { style: "listicle", background: "#F6F6F3", surface: "#FFFFFF", text: "#111216", muted: "#9A9DA6", accent: "#2F5BFF", accent2: "#2F5BFF",
+         font: "'Pretendard Variable', sans-serif" },
+  slate: { style: "listicle", background: "#15171C", surface: "#1D2027", text: "#ECEEF2", muted: "#6B7280", accent: "#C5F536", accent2: "#C5F536",
+           font: "'Pretendard Variable', sans-serif" },
   paper: { style: "listicle", background: "#F3EEE4", surface: "#FFFDF7", text: "#161514", muted: "#9A9286", accent: "#D9381E", accent2: "#1F3A93",
            font: "'Noto Serif CJK KR', serif" },
   terminal: { style: "listicle", background: "#050807", surface: "#08100C", text: "#D2FFE1", muted: "#4C7A5C", accent: "#39FF8C", accent2: "#FFB000",

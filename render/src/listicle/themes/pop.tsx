@@ -4,7 +4,7 @@ import React from "react";
 import { AbsoluteFill, spring, useCurrentFrame, useVideoConfig } from "remotion";
 
 import { fitFontSize } from "../../lib/layout";
-import { pad2, phase, seeded } from "../../lib/listicle";
+import { pad2, phase, seeded, recapCells } from "../../lib/listicle";
 import { Icon } from "../icons";
 import { fit, Highlighted, type LSceneProps } from "../scenes";
 import { abs, L } from "../style";
@@ -211,7 +211,8 @@ const Recap: React.FC<LSceneProps<{ title: string; subtitle?: string; items: { n
   const { fps } = useVideoConfig();
   const head = useBounce(0);
   const n = props.items.length;
-  const rowH = Math.min(120, Math.floor((1230 - 480) / n) - 18);
+  const cells = recapCells(n, { x: L.side, y: 480, w: L.width, h: 750 }, 22, 120);
+  const rowH = cells[0]?.h ?? 120;
   return (
     <AbsoluteFill>
       <div style={{ ...abs(L.side, 250), padding: "6px 26px", background: COLORS[0], border: BORDER, borderRadius: 24, fontSize: fit(props.title, 800, 80, 48), fontWeight: 900, color: "#FFFFFF", boxShadow: HARD, transform: `rotate(-2deg) scale(${Math.min(1.05, head)})`, transformOrigin: "left" }}>{props.title}</div>
@@ -219,12 +220,12 @@ const Recap: React.FC<LSceneProps<{ title: string; subtitle?: string; items: { n
       {props.items.map((it, i) => {
         const p = spring({ frame: Math.max(0, frame - 6 - Math.round((durationInFrames * 0.35 * i) / n)), fps, config: { damping: 9, stiffness: 170, mass: 0.8 } });
         return (
-          <div key={it.name + i} style={{ ...abs(L.side, 480 + i * (rowH + 18), L.width, rowH), background: "#FFFFFF", border: BORDER, borderRadius: 26, boxShadow: `6px 6px 0 ${INK}`, display: "flex", alignItems: "center", gap: 22, padding: "0 24px", transform: `translateX(${(1 - Math.min(1, p)) * 400}px) rotate(${i % 2 ? 1 : -1}deg)` }}>
+          <div key={it.name + i} style={{ ...abs(cells[i].x, cells[i].y, cells[i].w, rowH), background: "#FFFFFF", border: BORDER, borderRadius: 26, boxShadow: `6px 6px 0 ${INK}`, display: "flex", alignItems: "center", gap: 22, padding: "0 24px", transform: `translateX(${(1 - Math.min(1, p)) * 400}px) rotate(${i % 2 ? 1 : -1}deg)` }}>
             <div style={{ width: rowH * 0.62, height: rowH * 0.62, borderRadius: rowH, background: COLORS[i % COLORS.length], border: `4px solid ${INK}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Icon name="check" size={rowH * 0.4} color="#FFFFFF" stroke={3.2} />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: fit(it.name, 560, rowH * 0.38, 26), fontWeight: 900, color: INK, whiteSpace: "nowrap", overflow: "hidden" }}>{it.name}</div>
+              <div style={{ fontSize: fit(it.name, cells[i].w - rowH - 70, rowH * 0.34, 24), fontWeight: 900, color: INK, whiteSpace: "nowrap", overflow: "hidden" }}>{it.name}</div>
               {it.note ? <div style={{ fontSize: rowH * 0.22, color: tokens.sub, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden" }}>{it.note}</div> : null}
             </div>
           </div>

@@ -16,7 +16,7 @@ from app.core.auth import require_token
 from app.core.errors import ApiError
 from app.db.models import Job, Series, Topic
 from app.domain import cancel as cancel_domain, generation, overview, review, series as series_domain, topics as topic_domain
-from app.domain.jobs import create_job, create_listicle_job
+from app.domain.jobs import create_job, create_listicle_job, create_review_job
 from app.domain.upload_order import next_job
 from app.publish import approve as publishing
 from app.youtube.client import YouTubeError
@@ -50,10 +50,17 @@ class CreateJobBody(BaseModel):
 class ListicleBody(BaseModel):
     """목록형 쇼츠 (D42). items 를 주면 그 개수가 count"""
     topic: str = Field(min_length=1, max_length=100)
-    count: int = Field(default=5, ge=3, le=5)
+    count: int = Field(default=5, ge=1, le=10)  # v1.4: 1~10 (길이는 개수에 따라)
     references: list[str] = Field(default_factory=list, max_length=5)
-    items: list[str] = Field(default_factory=list, max_length=5)
+    items: list[str] = Field(default_factory=list, max_length=10)
     theme: Optional[str] = Field(default=None, max_length=30)  # 화면 테마 (v1.3). 없으면 추천
+    research: Optional[bool] = None  # 최신 검색 (v1.4). 없으면 주제의 '최근·인기…' 로 정한다
+
+
+class ReviewJobBody(BaseModel):
+    """실습 리뷰 쇼츠 (D46). 도구는 지금 claude 만"""
+    feature: str = Field(min_length=1, max_length=100)
+    tool: str = Field(default="claude", max_length=20)
 
 
 class StepBody(BaseModel):
@@ -260,7 +267,17 @@ def post_listicle(body: ListicleBody, request: Request) -> dict[str, Any]:
             raise ApiError(400, "unknown_theme", f"없는 테마: {body.theme}")
     with st.db() as s:
         job, _ = create_listicle_job(s, st.settings, st.clock(), topic=body.topic, count=body.count,
-                                     references=body.references, items=[i[:60] for i in body.items], theme=theme)
+                                     references=body.references, items=[i[:60] for i in body.items], theme=theme,
+                                     research=body.research)
+        s.commit()
+        return job_summary(job)
+
+
+@api.post("/review-jobs", status_code=201)
+def post_review_job(body: ReviewJobBody, request: Request) -> dict[str, Any]:
+    st = request.app.state
+    with st.db() as s:
+        job = create_review_job(s, st.settings, st.clock(), feature=body.feature, tool=body.tool)
         s.commit()
         return job_summary(job)
 

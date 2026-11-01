@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 LEAD_SEC = 0.2
 GAP_SEC = 0.15
+BEAT_COMPONENTS = {"LWalkthrough"}  # 문장 시작 프레임(장면 기준)을 props.beats 로 받는 장면 (목록형 v1.4: 문장마다 한 단계)
 
 
 def frame(t: float, fps: int) -> int:
@@ -42,6 +43,7 @@ def compute_timeline(scenes_doc: dict[str, Any], tts: dict[str, Any], *, fps: in
         start = t
         cur = start + lead
         items = by_scene.get(sc["id"], [])
+        starts = []
         for i, item in enumerate(items):
             if i:
                 cur += gap
@@ -60,10 +62,14 @@ def compute_timeline(scenes_doc: dict[str, Any], tts: dict[str, Any], *, fps: in
                                                  floor=captions[-1]["toFrame"] if captions else 0))
             else:
                 captions.append({"text": item["text"], "fromFrame": frame(cur, fps), "toFrame": frame(cur + length, fps)})
+            starts.append(cur)  # 말이 시작하는 시각 (맨 앞 장면은 위에서 밀렸을 수 있다)
             cur += length
         t = cur + float(sc.get("padAfterSec", 0.3)) * scale
+        visual = sc["visual"]
+        if visual.get("component") in BEAT_COMPONENTS:
+            visual = {**visual, "props": {**visual["props"], "beats": [frame(x, fps) - frame(start, fps) for x in starts]}}
         out_scenes.append({"id": sc["id"], "fromFrame": frame(start, fps), "durationInFrames": frame(t, fps) - frame(start, fps),
-                           "visual": sc["visual"], "animationPreset": sc["animationPreset"],
+                           "visual": visual, "animationPreset": sc["animationPreset"],
                            **({"section": sc["section"]} if sc.get("section") else {})})
     if hold:  # 짧은 쉼 동안은 앞 자막을 남겨 깜빡이지 않게
         for a, b in zip(captions, captions[1:]):

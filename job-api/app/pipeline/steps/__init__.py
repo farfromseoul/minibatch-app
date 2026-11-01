@@ -6,6 +6,7 @@
 
 
 def default_steps() -> dict:
+    from .lab import LabStep
     from .media import RenderStep, TimelineStep, TtsStep, VisualsStep
     from .publishing import QcStep, UploadStep
     from .review import ReviewStep
@@ -13,6 +14,6 @@ def default_steps() -> dict:
     from .script import ScriptStep
     from .topic import TopicStep
 
-    steps = (TopicStep(), ScriptStep(), ReviewStep(), ScenesStep(), TtsStep(), TimelineStep(), VisualsStep(), RenderStep(),
+    steps = (TopicStep(), LabStep(), ScriptStep(), ReviewStep(), ScenesStep(), TtsStep(), TimelineStep(), VisualsStep(), RenderStep(),
              QcStep(), UploadStep())
     return {s.name: s for s in steps}

@@ -133,7 +133,7 @@ LISTICLE = "listicle"
 
 def create_listicle_job(s: Session, settings, now: datetime, *, topic: str, count: int,
                         references: Optional[list[str]] = None, items: Optional[list[str]] = None,
-                        theme: Optional[str] = None) -> tuple[Job, str]:
+                        theme: Optional[str] = None, research: Optional[bool] = None) -> tuple[Job, str]:
     """목록형 쇼츠 (D42): 텔레그램 /top·POST /listicle. 단독 작업, 참고 자료·항목 이름은 작업 입력에 두고 주제 단계가 읽는다.
     화면 테마(v1.3): 주면 그 테마(themeChosen), 없으면 추천(바로 앞 목록형과 다르게). 돌려주는 글은 추천 이유"""
     from app.core.category import load_category
@@ -145,10 +145,29 @@ def create_listicle_job(s: Session, settings, now: datetime, *, topic: str, coun
         name, why = theme, "직접 고름"
     else:
         name, why = themes.recommend(cat, topic, items, themes.previous_theme(s))
+    from app.pipeline.steps.listicle import should_research
     job = _insert(s, settings, now, topic=topic, category=LISTICLE,
                   extra={"listicle": {"count": len(items) or count, "references": list(references or []), "items": items,
-                                      "theme": name, "themeChosen": bool(theme)}})
+                                      "theme": name, "themeChosen": bool(theme),
+                                      "research": should_research(topic, research)}})  # 최신 검색 (v1.4)
     return job, why
+
+
+HANDS_ON = "hands-on"
+
+
+def create_review_job(s: Session, settings, now: datetime, *, feature: str, tool: str = "claude") -> Job:
+    """실습 리뷰 쇼츠 (D46): 텔레그램 /try·POST /review-jobs. 계획은 주제 단계가, 실행은 계획 승인 뒤 lab 단계가.
+    업로드도 사람이 영상을 본 뒤에만(uploadApproval)"""
+    from app.core.category import load_category
+    ensure_category(settings, HANDS_ON)
+    cat = load_category(settings, HANDS_ON)
+    tools = (cat.get("review_video") or {}).get("tools") or ["claude"]
+    if tool not in tools:
+        raise ApiError(400, "unknown_tool", f"지금 쓸 수 있는 도구: {', '.join(tools)}")
+    return _insert(s, settings, now, topic=feature, category=HANDS_ON,
+                   extra={"review": {"feature": feature, "tool": tool, "planApproved": False},
+                          "uploadApproval": bool(cat.get("upload_approval", True)), "uploadApproved": False})
 
 
 def _auto_select(s: Session, settings, now: datetime) -> Job:

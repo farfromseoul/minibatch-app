@@ -2,18 +2,28 @@
 // 2026-10-31 v1.3: 색·모양·틀 부품은 테마 템플릿(themes/), 장면은 테마가 덮어쓴 것 또는 공통 장면.
 // 시각은 timeline 단계가 정한 정수 프레임을 그대로 쓴다 (앱 설계 "타임라인 계산").
 import React from "react";
-import { AbsoluteFill, Html5Audio, Sequence, useCurrentFrame } from "remotion";
+import { AbsoluteFill, Html5Audio, interpolate, Sequence, useCurrentFrame } from "remotion";
 
 import type { Timeline, TimelineScene } from "../lib/timeline";
 import { loadFonts } from "./fonts";
 import { LISTICLE_SCENES } from "./scenes";
-import { ThemeContext } from "./themes/context";
+import { AssetContext, ThemeContext } from "./themes/context";
 import { listicleTheme } from "./themes";
 
 loadFonts();
 
 const sceneAt = (t: Timeline, frame: number): TimelineScene | undefined =>
   t.scenes.find((s) => frame >= s.fromFrame && frame < s.fromFrame + s.durationInFrames) ?? t.scenes[t.scenes.length - 1];
+
+/** 장면 전환 (v1.4 L27): 들어올 때 0.2초 페이드 + 살짝 올라오고, 나갈 때 0.13초 페이드. 모든 테마 공통 */
+const IN = 6;
+const OUT = 4;
+const SceneFade: React.FC<{ duration: number; children: React.ReactNode }> = ({ duration, children }) => {
+  const frame = useCurrentFrame();
+  const enter = interpolate(frame, [0, IN], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: (x) => 1 - Math.pow(1 - x, 3) });
+  const leave = duration > IN + OUT * 2 ? interpolate(frame, [duration - OUT, duration], [1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : 1;
+  return <AbsoluteFill style={{ opacity: Math.min(enter, leave), transform: `translateY(${(1 - enter) * 14}px)` }}>{children}</AbsoluteFill>;
+};
 
 export const Listicle: React.FC<{ timeline: Timeline; assetBase: string }> = ({ timeline: t, assetBase }) => {
   const frame = useCurrentFrame();
@@ -27,13 +37,16 @@ export const Listicle: React.FC<{ timeline: Timeline; assetBase: string }> = ({ 
   const firstDetail = showHeader ? t.scenes.find((s) => s.section?.kind === "item" && s.section.index === index && s.visual.component !== "LItemCard") : undefined;
   return (
     <ThemeContext.Provider value={theme}>
+      <AssetContext.Provider value={assetBase}>
       <AbsoluteFill style={{ fontFamily: theme.tokens.font, color: theme.tokens.text }}>
         <Background />
         {t.scenes.map((s) => {
           const Scene = theme.scenes?.[s.visual.component] ?? LISTICLE_SCENES[s.visual.component];
           return (
             <Sequence key={s.id} from={s.fromFrame} durationInFrames={s.durationInFrames} name={s.id}>
-              <Scene durationInFrames={s.durationInFrames} props={s.visual.props} />
+              <SceneFade duration={s.durationInFrames}>
+                <Scene durationInFrames={s.durationInFrames} props={s.visual.props} />
+              </SceneFade>
             </Sequence>
           );
         })}
@@ -46,6 +59,7 @@ export const Listicle: React.FC<{ timeline: Timeline; assetBase: string }> = ({ 
         ))}
         <Caption t={t} />
       </AbsoluteFill>
+      </AssetContext.Provider>
     </ThemeContext.Provider>
   );
 };

@@ -55,12 +55,13 @@ class ThemeFlowTest(ListicleCase):
         self.poll()
 
         job_id = self.job_id()
-        self.assertEqual((self.stored(job_id)["theme"], self.stored(job_id)["themeChosen"]), ("terminal", False))
+        self.assertEqual((self.stored(job_id)["theme"], self.stored(job_id)["themeChosen"]), ("slate", False))  # v1.4: 미니멀 우선
         self.assertEqual(len(self.tg.sent("sendPhoto")), 1)
         msg = [m for m in self.tg.sent("sendMessage") if "reply_markup" in m][-1]
         datas = [b["callback_data"] for row in msg["reply_markup"]["inline_keyboard"] for b in row]
-        self.assertEqual(datas, [f"th:{job_id}:{n}" for n in ("nova", "paper", "terminal", "pop")])
-        self.assertIn("✓", [b["text"] for row in msg["reply_markup"]["inline_keyboard"] for b in row if b["callback_data"].endswith("terminal")][0])
+        self.assertEqual(datas, [f"th:{job_id}:{n}" for n in ("noir", "air", "slate", "nova", "paper", "terminal", "pop")])
+        self.assertEqual([len(r) for r in msg["reply_markup"]["inline_keyboard"]], [4, 3])
+        self.assertIn("✓", [b["text"] for row in msg["reply_markup"]["inline_keyboard"] for b in row if b["callback_data"].endswith("slate")][0])
 
     def test_direct_theme(self):
         self.tg.say("/top 클로드 스킬 추천, 3, paper")
@@ -98,4 +99,4 @@ class ThemeFlowTest(ListicleCase):
     def test_job_json_uses_category_default_without_theme(self):
         job_id = self.post("/listicle", {"topic": "아무 주제", "count": 3}).json()["id"]
         self.run_step(job_id, "topic")
-        self.assertIn(self.read(job_id, "job.json")["theme"], ("nova", "paper", "terminal", "pop"))
+        self.assertIn(self.read(job_id, "job.json")["theme"], ("noir", "air", "slate", "nova", "paper", "terminal", "pop"))

@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import subprocess
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -48,10 +49,15 @@ HELP = """🤖 MiniBatch 명령
    예) /series 클로드 코드 외부 스킬, 5
        https://github.com/anthropics/skills
        1. 스킬이란 무엇일까?
-/top 주제, 개수[, 테마] — 목록형 쇼츠 하나 만들기 (개수 3~5, 빼면 5. 테마 nova·paper·terminal·pop, 빼면 추천 + 버튼)
+/top 주제, 개수[, 검색][, 테마] — 목록형 쇼츠 하나 만들기 (개수 1~10, 빼면 5. 길이는 개수에 따라 약 22초 + 항목당 8초)
+   '검색' 을 붙이거나 주제에 최근·최신·인기·요즘·트렌드가 있으면 웹에서 지금 후보를 찾아 만든다
+   테마는 등록된 이름(빼면 추천 + 버튼)
    다음 줄에 (선택) 참고 자료 주소(http…, 5개까지) · 항목 이름('1.' 또는 '-' 로 시작, 주면 그 개수)
    예) /top 클로드 코드에서 진짜 쓸 기능, 5
        https://docs.anthropic.com/claude-code
+/try 기능[, claude] — 실습 리뷰 쇼츠: 그 기능을 격리된 실험 환경에서 직접 돌려 보고 결과로 영상 만들기
+   계획(과제)을 먼저 보내고 [실험 시작]을 눌러야 실행, 영상도 [업로드 승인]을 눌러야 올림
+   예) /try Claude Code 로 CSV 를 차트 HTML 로
 /run — 지금 생산 (정각을 기다리지 않고 n8n 1번 실행. 이미 돌고 있으면 알려 줌)
 /help — 이 도움말
 
@@ -74,16 +80,32 @@ HELP = """🤖 MiniBatch 명령
 DEFAULT_COUNT, MIN_COUNT, MAX_COUNT = 10, 3, 20  # 시리즈 화 수 (D37)
 COUNT = re.compile(r"^(\d+)\s*(화|편)?$")
 EXAMPLE = "예) 쿠버네티스 기초, 8"
-TOP_DEFAULT, TOP_MIN, TOP_MAX = 5, 3, 5  # 목록형 쇼츠 항목 수 (D42)
-TOP_EXAMPLE = "예) /top 개발자가 매일 쓰는 터미널 도구, 5 (끝에 ', 테마' 를 붙이면 그 테마: nova·paper·terminal·pop)"
+TOP_DEFAULT, TOP_MIN, TOP_MAX = 5, 1, 10  # 목록형 쇼츠 항목 수 (D42, v1.4: 1~10)
+TOP_EXAMPLE = "예) /top 개발자가 매일 쓰는 터미널 도구, 5 (개수 1~10. 끝에 ', 검색' 이면 최신 검색, ', 테마이름' 이면 그 테마)"
 
 
-def split_theme(body: str, cat: dict) -> tuple[str, Optional[str]]:
-    """'/top 주제, 5, paper' 의 첫 줄 끝이 등록된 테마면 떼어 낸다 (v1.3). 아니면 그대로(주제의 일부)"""
+SEARCH_WORDS = {"검색", "최신검색", "search"}
+
+
+def split_options(body: str, cat: dict) -> tuple[str, Optional[str], Optional[bool]]:
+    """'/top 주제, 5, 검색, paper' 의 첫 줄 끝에서 테마(v1.3)·검색(v1.4) 을 순서 상관없이 떼어 낸다.
+    둘 다 아니면 그대로(주제의 일부). 검색은 말하지 않으면 None (주제의 '최근·인기…' 로 정한다)"""
     first, nl, rest = body.partition("\n")
-    head, sep, tail = first.replace("，", ",").rpartition(",")
-    name = themes_domain.resolve(cat, tail) if sep else None
-    return ((head + nl + rest) if name else body), name
+    first = first.replace("，", ",")
+    theme, research = None, None
+    for _ in range(2):
+        head, sep, tail = first.rpartition(",")
+        if not sep:
+            break
+        word = tail.strip()
+        if research is None and word.replace(" ", "").lower() in SEARCH_WORDS:
+            research = True
+        elif theme is None and (name := themes_domain.resolve(cat, word)):
+            theme = name
+        else:
+            break
+        first = head
+    return first + nl + rest, theme, research
 
 
 MAX_REFERENCES = 5
@@ -244,6 +266,11 @@ class TelegramApprovals:
             return self._skip_episode(target)
         if kind == "rt":
             return self._retry_failed(target)
+        if kind == "lp":  # 실습 리뷰 계획 (D46): go 실험 시작 · re 다시 계획 · drop 버리기
+            job_id, _, act = target.rpartition(":")
+            return self._plan_button(job_id, act)
+        if kind in ("ru", "rx"):  # 실습 리뷰 업로드 승인·버리기 (D46)
+            return self._upload_button(target, kind == "ru")
         if kind in ("ua", "up", "ux"):  # ASMR 채널 (D38): 업로드 승인, 공개 승인, 버리기
             if self.asmr is None:
                 return "ASMR 기능이 꺼져 있습니다"
@@ -360,6 +387,9 @@ class TelegramApprovals:
         if cmd == "/run":
             self._safe_send(self.production.run()["message"] if self.production else "생산 시작 기능이 꺼져 있습니다", None)
             return
+        if cmd == "/try":
+            self._try_command(re.split(r"\s", text, maxsplit=1)[1] if re.search(r"\s", text) else "")
+            return
         if cmd == "/top":
             self._top_command(re.split(r"\s", text, maxsplit=1)[1] if re.search(r"\s", text) else "")
             return
@@ -408,7 +438,7 @@ class TelegramApprovals:
             self._safe_send(f"/top 주제, 개수 로 목록형 쇼츠를 만듭니다. {TOP_EXAMPLE}", None)
             return
         cat = load_category(self.settings, "listicle")
-        body, theme = split_theme(body, cat)  # 첫 줄 끝 ', 테마' (v1.3)
+        body, theme, research = split_options(body, cat)  # 첫 줄 끝 ', 테마'(v1.3) · ', 검색'(v1.4)
         try:
             req = parse_request(body, default=TOP_DEFAULT, lo=TOP_MIN, hi=TOP_MAX, unit="항목")
         except ValueError as e:
@@ -417,15 +447,106 @@ class TelegramApprovals:
         try:
             with self.db() as s:
                 job, why = jobs_domain.create_listicle_job(s, self.settings, self.clock(), topic=req.theme, count=req.count,
-                                                           references=req.references, items=[i[:60] for i in req.episodes], theme=theme)
+                                                           references=req.references, items=[i[:60] for i in req.episodes], theme=theme,
+                                                           research=research)
                 s.commit()
                 job_id, chosen = job.id, job.input["listicle"]["theme"]
+                searched = job.input["listicle"].get("research")
         except ApiError as e:
             self._safe_send(f"⚠️ {e.message}", None)
             return
-        extra = (f" · 참고 자료 {len(req.references)}개" if req.references else "") + (" · 항목 직접" if req.episodes else "")
+        extra = ((f" · 참고 자료 {len(req.references)}개" if req.references else "") + (" · 항목 직접" if req.episodes else "")
+                 + (" · 최신 검색" if searched and not req.episodes else ""))
         self._safe_send(f"✅ 목록형 쇼츠 등록: {req.theme}, {req.count}개{extra} ({job_id})\n다음 정각 생산에서 먼저 만듭니다(바로 만들려면 /run). 진행은 /status", None)
         self._send_theme_choice(cat, job_id, chosen, why)
+
+    # ---------- 실습 리뷰 쇼츠 (D46)
+
+    def _try_command(self, body: str) -> None:
+        """/try 기능[, 도구]: 실습 리뷰 작업을 만든다. 계획은 다음 생산의 주제 단계가 만들고 승인 버튼을 보낸다"""
+        body = body.strip().split("\n", 1)[0]
+        if not body:
+            self._safe_send("/try 기능[, claude] 로 실습 리뷰 쇼츠를 만듭니다. 예) /try Claude Code 로 CSV 를 차트 HTML 로", None)
+            return
+        head, sep, tail = body.replace("，", ",").rpartition(",")
+        feature, tool = (head.strip(), tail.strip().lower()) if sep and tail.strip().lower() in ("claude", "codex", "gemini") else (body, "claude")
+        if len(feature) > 100:
+            self._safe_send("⚠️ 기능은 100자 이내로 써 주세요", None)
+            return
+        try:
+            with self.db() as s:
+                job = jobs_domain.create_review_job(s, self.settings, self.clock(), feature=feature, tool=tool)
+                s.commit()
+                job_id = job.id
+        except ApiError as e:
+            self._safe_send(f"⚠️ {e.message}", None)
+            return
+        self._safe_send(f"🧪 실습 리뷰 등록: {feature} ({tool}, {job_id})\n다음 생산(바로: /run)에서 기능을 조사하고 실험 계획을 보냅니다. "
+                        "[실험 시작]을 누르기 전에는 아무것도 실행하지 않습니다.", None)
+
+    def notify_blocked(self, job_id: str, step: str) -> None:
+        """단계가 기다림으로 멈췄을 때: 실험 계획 승인 버튼, 업로드 전 영상 미리보기"""
+        with self.db() as s:
+            job = s.get(Job, job_id)
+            if job is None:
+                return
+            inp, topic = dict(job.input or {}), job.topic
+        job_dir = Path(self.settings.jobs_dir) / job_id
+        if step == "lab" and inp.get("review") and not inp["review"].get("planApproved"):
+            from app.pipeline.steps.handson import plan_text
+            rv = json.loads((job_dir / "job.json").read_text(encoding="utf-8")).get("review") or {}
+            self._safe_send(plan_text(job_id, topic, rv)[:3900],
+                            [("실험 시작", f"lp:{job_id}:go"), ("다시 계획", f"lp:{job_id}:re"), ("버리기", f"lp:{job_id}:drop")])
+        elif step == "upload" and inp.get("uploadApproval") and not inp.get("uploadApproved"):
+            buttons = [("업로드 승인", f"ru:{job_id}"), ("버리기", f"rx:{job_id}")]
+            caption = f"🎬 업로드 전 검토: {topic} ({job_id})\n보고 괜찮으면 [업로드 승인] → 비공개로 올린 뒤 [승인(공개)]를 보냅니다."
+            try:
+                self.bot.send_video(preview_video(job_dir), caption, buttons)
+            except (TelegramError, OSError, subprocess.SubprocessError) as e:
+                log.warning("업로드 전 미리보기 영상 실패: %s", e)
+                self._safe_send(caption + f"\n(영상을 보내지 못했습니다: {str(e)[:80]}. 작업 폴더 render/final.mp4 로 확인)", buttons)
+
+    def _plan_button(self, job_id: str, act: str) -> str:
+        now = self.clock()
+        with self.db() as s:
+            job = s.get(Job, job_id)
+            if job is None:
+                return f"작업이 없습니다: {job_id}"
+            rv = dict((job.input or {}).get("review") or {})
+            if not rv:
+                return f"실습 리뷰 작업이 아닙니다: {job_id}"
+            if act == "drop":
+                cancel_domain.cancel_job(s, job, now, WHO, "텔레그램 [버리기] 실험 계획")
+                s.commit()
+                return f"🗑 실험 계획을 버렸습니다: {job.topic}"
+            if job.status not in ("PENDING", "RUNNING", "WAITING"):
+                return f"이미 끝난 작업입니다: {job.status}"
+            rv["planApproved"] = act == "go"
+            job.input = {**(job.input or {}), "review": rv}
+            s.commit()
+            topic = job.topic
+        if act == "go":
+            return f"🧪 실험 시작 승인: {topic}. 다음 생산 때 실험합니다(바로: /run)"
+        if act == "re":
+            if self.runner is None:
+                return "되돌리기 기능이 꺼져 있습니다"
+            self.runner.reset(job_id, "topic")
+            return f"🔄 실험 계획을 다시 만듭니다: {topic}"
+        return f"모르는 버튼: {act}"
+
+    def _upload_button(self, job_id: str, ok: bool) -> str:
+        now = self.clock()
+        with self.db() as s:
+            job = s.get(Job, job_id)
+            if job is None:
+                return f"작업이 없습니다: {job_id}"
+            if not ok:
+                cancel_domain.cancel_job(s, job, now, WHO, "텔레그램 [버리기] 업로드 전 검토")
+                s.commit()
+                return f"🗑 영상을 버렸습니다(올리지 않음): {job.topic}"
+            job.input = {**(job.input or {}), "uploadApproved": True}
+            s.commit()
+            return f"✅ 업로드 승인: {job.topic}. 다음 생산 때 비공개로 올리고 [승인(공개)]를 보냅니다(바로: /run)"
 
     def _send_theme_choice(self, cat: dict, job_id: str, current: str, why: str) -> None:
         """테마 미리보기 사진 + [테마] 버튼 (v1.3). 사진 메시지는 글 고치기가 달라 버튼은 글 메시지에 단다"""
@@ -433,7 +554,7 @@ class TelegramApprovals:
         order = themes_domain.names(cat)
         if preview.is_file():
             try:
-                self.bot.send_photo(preview, "🎨 화면 테마 미리보기 (왼쪽부터 " + " · ".join(order) + ")")
+                self.bot.send_photo(preview, "🎨 화면 테마 미리보기 (왼쪽 위부터 두 개씩: " + " · ".join(order) + ")")
             except TelegramError as e:
                 log.warning("테마 미리보기 사진 실패: %s", e)
         lines = [f"🎨 테마: {themes_domain.label(cat, current)} ({why})"]
@@ -441,7 +562,7 @@ class TelegramApprovals:
             lines.append(f"· {t['name']}: {t.get('mood', '')} — {t.get('fits', '')}")
         lines.append("만들기 시작 전까지 버튼으로 바꿀 수 있습니다. 누르지 않으면 이 테마로 만듭니다.")
         buttons = [(f"{n} ✓" if n == current else n, f"th:{job_id}:{n}") for n in order]
-        self._safe_send("\n".join(lines), buttons)
+        self._safe_send("\n".join(lines), [buttons[i:i + 4] for i in range(0, len(buttons), 4)])  # 한 줄에 4개
 
     def _set_theme(self, job_id: str, name: str) -> str:
         cat = load_category(self.settings, "listicle")
@@ -724,3 +845,18 @@ class TelegramApprovals:
 
     def stop(self) -> None:
         self._stop.set()
+
+
+TELEGRAM_VIDEO_MAX = 45 * 1024 * 1024  # 봇이 보낼 수 있는 영상은 50MB 까지 (여유를 둔다)
+
+
+def preview_video(job_dir: Path) -> Path:
+    """업로드 전 검토용 영상. 크면 텔레그램용으로 줄인 사본(render/preview-telegram.mp4)을 만든다"""
+    video = job_dir / "render" / "final.mp4"
+    if video.stat().st_size <= TELEGRAM_VIDEO_MAX:
+        return video
+    small = job_dir / "render" / "preview-telegram.mp4"
+    if not small.exists():
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(video), "-vf", "scale=-2:960", "-c:v", "libx264", "-crf", "30",
+                        "-preset", "veryfast", "-c:a", "aac", "-b:a", "96k", str(small)], check=True, timeout=300)
+    return small

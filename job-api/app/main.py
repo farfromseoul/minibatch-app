@@ -81,7 +81,8 @@ def create_app(settings: Optional[Settings] = None, *, steps: Optional[dict] = N
                                   steps={**default_steps(), "topic": TopicStep(news=app.state.news),
                                          **(steps or {})},  # 넘겨준 단계가 기본을 덮는다
                                   executor=executor, notify=notify, clock=clock,
-                                  on_review=app.state.telegram.notify_review if app.state.telegram else None)
+                                  on_review=app.state.telegram.notify_review if app.state.telegram else None,
+                                  on_blocked=app.state.telegram.notify_blocked if app.state.telegram else None)
         runner = app.state.runner
         # 텔레그램 /run (2026-10-31): 단계가 실행 중이면(전역 잠금) 그 작업을 알려 겹쳐 시작하지 않는다
         app.state.production = Production(url=s.produce_webhook_url, clock=clock,

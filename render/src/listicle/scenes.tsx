@@ -1,14 +1,15 @@
-// 목록형 쇼츠(D42) 공통 장면 12종. 속성 모양은 src/lib/timeline.ts 의 검사, job-api app/schemas/templates.py 와 같다.
+// 목록형 쇼츠(D42) 공통 장면 13종(v1.4 실습 장면 LWalkthrough 포함). 속성 모양은 src/lib/timeline.ts 의 검사, job-api app/schemas/templates.py 와 같다.
 // 2026-10-31 v1.3: 색·글꼴·모서리·그림자·움직임은 테마 템플릿(useTheme)에서 받는다. 테마가 덮어쓰지 않은 장면은 여기 것을 쓴다.
 // 움직임은 모두 프레임에서 계산한다(spring·interpolate). 장면 길이가 달라도 같은 리듬이 되게 길이 비율(phase)을 쓴다.
 import React from "react";
-import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
+import { AbsoluteFill, Img, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
 
 import { fitFontSize } from "../lib/layout";
-import { countUp, pad2, phase, seeded, typed } from "../lib/listicle";
+import { countUp, pad2, phase, recapCells, seeded, typed, walkSchedule } from "../lib/listicle";
+import type { WalkStep, WalkTiming } from "../lib/listicle";
 import { Icon } from "./icons";
 import { abs, L, rise } from "./style";
-import { Accent, cardStyle, useIn, useTheme, useTokens } from "./themes/context";
+import { Accent, AssetContext, cardStyle, useIn, useTheme, useTokens } from "./themes/context";
 import type { Tokens } from "./themes/types";
 
 export type LSceneProps<P> = { durationInFrames: number; props: P };
@@ -176,8 +177,8 @@ export const Window: React.FC<{ x: number; y: number; w: number; h: number; titl
   return (
     <div style={{ ...abs(x, y, w, h), ...cardStyle(k, { active, strong: true }), overflow: "hidden", ...rise(p, 44) }}>
       <div style={{ height: 60, display: "flex", alignItems: "center", gap: 12, padding: "0 26px", borderBottom: `1px solid ${k.line}` }}>
-        {["#FF6159", "#FEBC2E", "#28C840"].map((c) => (
-          <div key={c} style={{ width: 16, height: 16, borderRadius: 8, background: c, opacity: 0.85 }} />
+        {(k.windowDots ?? ["#FF6159", "#FEBC2E", "#28C840"]).map((c, i) => (
+          <div key={i} style={{ width: 16, height: 16, borderRadius: 8, background: c, opacity: 0.85 }} />
         ))}
         {title ? <div style={{ marginLeft: 14, fontFamily: k.mono, fontSize: 24, color: k.muted }}>{title}</div> : null}
       </div>
@@ -496,8 +497,10 @@ export const LRecap: React.FC<LSceneProps<{ title: string; subtitle?: string; it
   const at = useStagger();
   const n = props.items.length;
   const top = 500;
-  const rowH = Math.min(118, Math.floor((1230 - top) / n) - 18);
-  const rail = phase(frame, durationInFrames, 0.05, 0.6);
+  const cells = recapCells(n, { x: L.side + 96, y: top, w: L.width - 96, h: 730 });
+  const rowH = cells[0]?.h ?? 118;
+  const twoCols = n >= 7;
+  const rail = twoCols ? 0 : phase(frame, durationInFrames, 0.05, 0.6);
   return (
     <AbsoluteFill>
       <div style={{ ...abs(L.side, 262), fontSize: fit(props.title, 900, 92, 54), fontWeight: 900, fontFamily: k.titleFont, letterSpacing: -3, ...rise(head, 24) }}>
@@ -507,15 +510,17 @@ export const LRecap: React.FC<LSceneProps<{ title: string; subtitle?: string; it
       <div style={{ ...abs(L.side + 36, top + rowH / 2, 4, (n - 1) * (rowH + 18) * rail), borderRadius: 2, background: k.gradient }} />
       {props.items.map((it, i) => {
         const p = at(i, 6 + Math.round((durationInFrames * 0.3 * i) / n));
-        const y = top + i * (rowH + 18);
+        const c = cells[i];
+        const x = twoCols ? c.x - 96 : c.x;
+        const w = twoCols ? c.w + (c.x - 96 > L.side ? 0 : 96) - 70 : c.w;
         return (
           <React.Fragment key={it.name + i}>
-            <Ring k={k} size={44} pad={3} style={{ ...abs(L.side + 16, y + rowH / 2 - 22), opacity: Math.min(1, p), transform: `scale(${0.5 + 0.5 * p})` }}>
+            <Ring k={k} size={44} pad={3} style={{ ...abs(twoCols ? x : L.side + 16, c.y + rowH / 2 - 22), opacity: Math.min(1, p), transform: `scale(${0.5 + 0.5 * p})` }}>
               <div style={{ fontSize: 18, fontWeight: 900, color: k.text }}>{i + 1}</div>
             </Ring>
-            <div style={{ ...abs(L.side + 96, y, L.width - 96, rowH), ...cardStyle(k), display: "flex", alignItems: "center", gap: 20, padding: "0 30px", opacity: Math.min(1, p), transform: `translateX(${(1 - p) * 60}px)` }}>
+            <div style={{ ...abs(twoCols ? x + 60 : c.x, c.y, twoCols ? w : c.w, rowH), ...cardStyle(k), display: "flex", alignItems: "center", gap: 20, padding: twoCols ? "0 20px" : "0 30px", opacity: Math.min(1, p), transform: `translateX(${(1 - p) * 60}px)` }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: fit(it.name, 520, Math.round(rowH * 0.38), 26), fontWeight: 800, color: k.text, whiteSpace: "nowrap", overflow: "hidden" }}>{it.name}</div>
+                <div style={{ fontSize: fit(it.name, twoCols ? 300 : 520, Math.round(rowH * 0.34), 26), fontWeight: 800, color: k.text, whiteSpace: "nowrap", overflow: "hidden" }}>{it.name}</div>
                 {it.note ? <div style={{ fontSize: Math.round(rowH * 0.22), color: k.sub, marginTop: 4, whiteSpace: "nowrap", overflow: "hidden" }}>{it.note}</div> : null}
               </div>
               {it.tag ? <div style={{ padding: "6px 16px", borderRadius: 20, background: k.gradient, color: k.onAccent, fontSize: 24, fontWeight: 800, whiteSpace: "nowrap" }}>{it.tag}</div> : null}
@@ -548,6 +553,232 @@ export const LOutro: React.FC<LSceneProps<{ title: string; subtitle?: string }>>
   );
 };
 
+// ---------- 실습 (v1.4 L21): 대본이 말하는 입력을 문장마다 한 단계씩 쳐 보인다. 시각은 timeline 이 넣은 beats(문장 시작)
+
+type WalkProps = { kind: "terminal" | "code" | "chat" | "settings"; title: string; steps: WalkStep[]; beats?: number[] };
+
+const show = (frame: number, at: number) => interpolate(frame, [at, at + 8], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+
+/** 단계 표시: 01 ─ 02 ─ 03, 지금 단계만 강조색 */
+const StepRail: React.FC<{ count: number; current: number; p: number }> = ({ count, current, p }) => {
+  const k = useTokens();
+  if (count < 2) return null;
+  return (
+    <div style={{ ...abs(L.side, 492, L.width, 48), display: "flex", alignItems: "center", gap: 14, ...rise(p, -10) }}>
+      {Array.from({ length: count }, (_, i) => {
+        const on = i === current;
+        const done = i < current;
+        return (
+          <React.Fragment key={i}>
+            {i ? <div style={{ flex: "0 0 36px", height: 2, background: done || on ? k.accent : k.line }} /> : null}
+            <div style={{ fontFamily: k.mono, fontSize: 24, fontWeight: 700, letterSpacing: 1, padding: "6px 16px", borderRadius: 24,
+              color: on ? k.onAccent : done ? k.text : k.muted, background: on ? k.accent : "transparent", border: `${k.border || 1}px solid ${on ? k.accent : k.line}` }}>
+              STEP {pad2(i + 1)}
+            </div>
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+};
+
+/** 터미널·코드: 줄이 아래로 쌓이고 넘치면 위로 밀린다 */
+const WalkConsole: React.FC<{ props: WalkProps; times: WalkTiming[]; frame: number }> = ({ props, times, frame }) => {
+  const k = useTokens();
+  const code = props.kind === "code";
+  const rows = props.steps.reduce((n, st) => n + 1 + st.output.length, 0);
+  const size = Math.max(24, Math.min(40, Math.floor(540 / (rows * 1.6))));
+  let lineNo = 0;
+  return (
+    <div style={{ height: 560, display: "flex", flexDirection: "column", justifyContent: rows * size * 1.6 > 540 ? "flex-end" : "flex-start", overflow: "hidden", fontFamily: k.mono, fontSize: size, lineHeight: 1.55 }}>
+      {props.steps.map((st, j) => {
+        const tm = times[j];
+        if (frame < tm.typeFrom) return null;
+        const p = progress01(frame, tm.typeFrom, tm.typeTo);
+        const past = j < times.length - 1 && frame >= times[j + 1].typeFrom;
+        const no = ++lineNo;
+        return (
+          <div key={j} style={{ opacity: past ? 0.5 : 1, marginTop: j ? size * 0.5 : 0 }}>
+            <div style={{ color: k.text, wordBreak: "break-all", whiteSpace: "pre-wrap" }}>
+              {code ? <span style={{ color: k.muted, display: "inline-block", width: size * 1.6 }}>{no}</span> : <span style={{ color: k.accent, fontWeight: 700 }}>❯ </span>}
+              {typed(st.input, p)}
+              <span style={{ color: k.accent, opacity: p < 1 && frame % 30 < 15 ? 1 : 0 }}>▌</span>
+            </div>
+            {st.output.map((o, i) => {
+              const v = show(frame, tm.outFrom[i]);
+              const n = code ? ++lineNo : 0;
+              return (
+                <div key={i} style={{ color: code ? k.text : i === st.output.length - 1 ? k.accent : k.sub, opacity: v, transform: `translateY(${(1 - v) * 10}px)`, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                  {code ? <span style={{ color: k.muted, display: "inline-block", width: size * 1.6 }}>{n}</span> : "  "}
+                  {o}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+const progress01 = (frame: number, a: number, b: number) => Math.min(1, Math.max(0, (frame - a) / Math.max(1, b - a)));
+
+/** 채팅: 내가 친 요청(오른쪽) → 답(왼쪽). 새 대화가 아래에 붙고 위로 밀린다 */
+const WalkChat: React.FC<{ props: WalkProps; times: WalkTiming[]; frame: number }> = ({ props, times, frame }) => {
+  const k = useTokens();
+  return (
+    <div style={{ ...abs(L.side, 560, L.width, 680), display: "flex", flexDirection: "column", justifyContent: "flex-end", gap: 22, overflow: "hidden" }}>
+      {props.steps.map((st, j) => {
+        const tm = times[j];
+        if (frame < tm.typeFrom) return null;
+        const p = progress01(frame, tm.typeFrom, tm.typeTo);
+        const reply = st.output.length ? show(frame, tm.outFrom[0]) : 0;
+        return (
+          <React.Fragment key={j}>
+            <div style={{ alignSelf: "flex-end", maxWidth: 760, padding: "22px 30px", borderRadius: Math.max(k.radius, 24), background: k.accent, color: k.onAccent,
+              fontSize: fit(st.input, 700, 38, 28, 2), fontWeight: 700, lineHeight: 1.35 }}>
+              {typed(st.input, p)}
+              {p < 1 ? <span style={{ opacity: frame % 30 < 15 ? 1 : 0 }}>▏</span> : null}
+            </div>
+            {st.output.length ? (
+              <div style={{ alignSelf: "flex-start", maxWidth: 820, padding: "22px 30px", ...cardStyle(k, { strong: true, radius: Math.max(k.radius, 24) }), opacity: reply, transform: `translateY(${(1 - reply) * 14}px)` }}>
+                {st.output.map((o, i) => {
+                  const v = show(frame, tm.outFrom[i]);
+                  return (
+                    <div key={i} style={{ fontSize: fit(o, 740, 34, 24, 2), color: i ? k.sub : k.text, fontWeight: i ? 500 : 700, lineHeight: 1.4, marginTop: i ? 10 : 0, opacity: v }}>
+                      {o}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+};
+
+/** 설정: 메뉴 경로(input 'A > B > C')를 차례로 누르고, 출력 줄은 켜지는 스위치로 */
+const WalkSettings: React.FC<{ props: WalkProps; times: WalkTiming[]; frame: number }> = ({ props, times, frame }) => {
+  const k = useTokens();
+  const j = Math.max(0, times.reduce((c, tm, i) => (frame >= tm.typeFrom ? i : c), 0));
+  const st = props.steps[j];
+  const tm = times[j];
+  const parts = st.input.split(/\s*[>›»]\s*/).filter(Boolean);
+  const p = progress01(frame, tm.typeFrom, tm.typeTo);
+  const lit = Math.ceil(p * parts.length);
+  return (
+    <div style={{ height: 560, display: "flex", flexDirection: "column", gap: 26 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
+        {parts.map((x, i) => (
+          <React.Fragment key={i}>
+            {i ? <span style={{ color: k.muted, fontSize: 30 }}>›</span> : null}
+            <span style={{ fontSize: fit(x, 300, 32, 22), fontWeight: 700, padding: "8px 18px", borderRadius: 14,
+              color: i < lit ? (i === parts.length - 1 ? k.onAccent : k.text) : k.muted,
+              background: i < lit && i === parts.length - 1 ? k.accent : "transparent", border: `1px solid ${i < lit ? k.accent : k.line}` }}>{x}</span>
+          </React.Fragment>
+        ))}
+      </div>
+      {st.output.map((o, i) => {
+        const v = show(frame, tm.outFrom[i]);
+        const on = show(frame, tm.outFrom[i] + 10);
+        return (
+          <div key={j + "-" + i} style={{ display: "flex", alignItems: "center", gap: 24, padding: "20px 26px", ...cardStyle(k, { active: on > 0.5 }), opacity: v, transform: `translateY(${(1 - v) * 12}px)` }}>
+            <div style={{ flex: 1, fontSize: fit(o, 600, 34, 24), color: k.text, fontWeight: 600 }}>{o}</div>
+            <div style={{ width: 84, height: 46, borderRadius: 23, background: on > 0.5 ? k.accent : k.line, position: "relative" }}>
+              <div style={{ position: "absolute", top: 5, left: 5 + on * 38, width: 36, height: 36, borderRadius: 18, background: on > 0.5 ? k.onAccent : k.surfaceStrong }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+export const LWalkthrough: React.FC<LSceneProps<WalkProps>> = ({ durationInFrames, props }) => {
+  const frame = useCurrentFrame();
+  const enter = useIn(0);
+  const times = walkSchedule(props.steps, props.beats, durationInFrames);
+  const current = Math.max(0, times.reduce((c, tm, i) => (frame >= tm.typeFrom ? i : c), 0));
+  const title = props.title || { terminal: "~/project — zsh", code: "editor", chat: "chat", settings: "Settings" }[props.kind];
+  return (
+    <AbsoluteFill>
+      <StepRail count={props.steps.length} current={current} p={enter} />
+      {props.kind === "chat" ? (
+        <WalkChat props={props} times={times} frame={frame} />
+      ) : (
+        <Window x={L.side} y={560} w={L.width} h={680} title={title} p={enter}>
+          {props.kind === "settings" ? <WalkSettings props={props} times={times} frame={frame} /> : <WalkConsole props={props} times={times} frame={frame} />}
+        </Window>
+      )}
+    </AbsoluteFill>
+  );
+};
+
+// ---------- 실습 리뷰 (D46): 실험 결과물 캡처와 평가
+
+/** 결과물 화면: 실험이 만든 파일의 캡처 그림을 카드에 담고, 파일 이름·성공/실패·걸린 시간 */
+export const LArtifact: React.FC<LSceneProps<{ image: string; title: string; ok: boolean; meta?: string }>> = ({ durationInFrames, props }) => {
+  const frame = useCurrentFrame();
+  const k = useTokens();
+  const base = React.useContext(AssetContext);
+  const enter = useIn(0);
+  const badge = phase(frame, durationInFrames, 0.15, 0.3);
+  const zoom = 1 + phase(frame, durationInFrames, 0, 1) * 0.04;
+  return (
+    <AbsoluteFill>
+      <div style={{ ...abs(L.side, 500, L.width, 640), ...cardStyle(k, { strong: true }), overflow: "hidden", ...rise(enter, 30) }}>
+        <div style={{ height: 56, display: "flex", alignItems: "center", gap: 14, padding: "0 24px", borderBottom: `1px solid ${k.line}` }}>
+          <div style={{ fontFamily: k.mono, fontSize: 24, color: k.sub, flex: 1, whiteSpace: "nowrap", overflow: "hidden" }}>{props.title}</div>
+          <div style={{ padding: "4px 14px", borderRadius: 999, fontSize: 22, fontWeight: 800, opacity: badge,
+            background: props.ok ? k.accent : "transparent", color: props.ok ? k.onAccent : k.muted, border: `1.5px solid ${props.ok ? k.accent : k.muted}` }}>
+            {props.ok ? "✓ 성공" : "✗ 실패"}
+          </div>
+        </div>
+        <div style={{ position: "absolute", top: 56, left: 0, right: 0, bottom: 0, background: "#FFFFFF", overflow: "hidden" }}>
+          <Img src={base + props.image} style={{ width: "100%", height: "100%", objectFit: "contain", transform: `scale(${zoom})` }} />
+        </div>
+      </div>
+      {props.meta ? (
+        <div style={{ ...abs(L.side, 1162, L.width), fontFamily: k.mono, fontSize: 26, color: k.muted, opacity: badge }}>{props.meta}</div>
+      ) : null}
+    </AbsoluteFill>
+  );
+};
+
+/** 평가: 좋은 점(✓)·아쉬운 점(–)·추천 대상 */
+export const LVerdict: React.FC<LSceneProps<{ title: string; pros: string[]; cons: string[]; forWhom: string; meta?: string }>> = ({ durationInFrames, props }) => {
+  const frame = useCurrentFrame();
+  const k = useTokens();
+  const head = useIn(0);
+  const rows = [...props.pros.map((t) => ({ t, good: true })), ...props.cons.map((t) => ({ t, good: false }))];
+  const who = phase(frame, durationInFrames, 0.45, 0.6);
+  return (
+    <AbsoluteFill>
+      <div style={{ ...abs(L.side, 270, L.width), fontSize: fit(props.title, L.width, 92, 56), fontWeight: k.titleWeight, color: k.text, letterSpacing: -3, ...rise(head, 18) }}>
+        {props.title}
+      </div>
+      {props.meta ? <div style={{ ...abs(L.side, 392), fontFamily: k.mono, fontSize: 26, color: k.muted, ...rise(head, 12) }}>{props.meta}</div> : null}
+      {rows.map((r, i) => {
+        const p = phase(frame, durationInFrames, 0.06 + i * 0.08, 0.14 + i * 0.08);
+        return (
+          <div key={r.t + i} style={{ ...abs(L.side, 500 + i * 128, L.width, 108), ...cardStyle(k, { active: r.good && i === 0 }), display: "flex", alignItems: "center", gap: 24,
+            padding: "0 30px", opacity: p, transform: `translateX(${(1 - p) * 40}px)` }}>
+            <div style={{ width: 52, height: 52, borderRadius: 26, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 30, fontWeight: 900,
+              background: r.good ? k.accent : "transparent", color: r.good ? k.onAccent : k.muted, border: r.good ? "none" : `2px solid ${k.muted}` }}>{r.good ? "✓" : "–"}</div>
+            <div style={{ flex: 1, fontSize: fit(r.t, 700, 40, 28), fontWeight: 700, color: r.good ? k.text : k.sub }}>{r.t}</div>
+          </div>
+        );
+      })}
+      <div style={{ ...abs(L.side, 520 + rows.length * 128, L.width), opacity: who, transform: `translateY(${(1 - who) * 12}px)` }}>
+        <div style={{ fontFamily: k.mono, fontSize: 24, color: k.muted, letterSpacing: 2 }}>추천</div>
+        <div style={{ marginTop: 8, fontSize: fit(props.forWhom, L.width, 48, 32), fontWeight: 800 }}><Accent>{props.forWhom}</Accent></div>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
 export const LISTICLE_SCENES: Record<string, React.FC<LSceneProps<any>>> = {
   LHookClaim,
   LHookReveal,
@@ -561,4 +792,7 @@ export const LISTICLE_SCENES: Record<string, React.FC<LSceneProps<any>>> = {
   LCompare,
   LRecap,
   LOutro,
+  LWalkthrough,
+  LArtifact,
+  LVerdict,
 };

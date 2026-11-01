@@ -29,6 +29,7 @@ export type Tokens = {
   activeBorder: string;   // 강조된 카드 테두리 색
   glow: (s?: number) => string; // 빛(없는 테마는 "none")
   accentText: React.CSSProperties; // 강조 글자 모양(그라데이션 글자·단색 등)
+  windowDots?: string[];  // 창 위 점 세 개 색 (없으면 맥 신호등 색). 미니멀 테마는 선 색 하나 (v1.4)
 };
 
 export type Motion = {

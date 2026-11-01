@@ -35,7 +35,8 @@ class DefaultPipelineTest(unittest.TestCase):
     def test_design_order(self):
         from app.pipeline.pipeline import PIPELINE
 
-        self.assertEqual(PIPELINE, ["topic", "script", "review", "scenes", "tts", "timeline",
+        # lab: 실습 리뷰 실험 (D46). 다른 형식은 바로 지나간다
+        self.assertEqual(PIPELINE, ["topic", "lab", "script", "review", "scenes", "tts", "timeline",
                                     "visuals", "render", "qc", "upload"])
 
 

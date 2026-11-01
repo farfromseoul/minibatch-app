@@ -145,6 +145,10 @@ class ScriptStep:
             from .listicle import run_script
             run_script(ctx, job, cat, _review_feedback(ctx))
             return
+        if job.get("format") == "review":  # 실습 리뷰 (D46): 실험 기록만 근거로
+            from .handson import run_script as run_review_script
+            run_review_script(ctx, job, cat, _review_feedback(ctx))
+            return
         rules = cat.get("script", {})
         max_sentence = int(rules.get("max_sentence_chars", 40))
         series = job.get("series")

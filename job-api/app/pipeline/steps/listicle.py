@@ -4,6 +4,8 @@
   검토·설명란이 읽는 호환 필드(hook·body·summary)를 말하는 순서대로 펼쳐 둔다.
 - 장면: 틀(첫마디 두 장면, 항목 소개 카드, 정리, 끝)은 코드가 만들고, 항목 설명 그림만 LLM 이 고른다.
   그림을 끝내 못 고르면 아이콘 장면으로 대신하고 영상은 계속 만든다(degraded).
+- 실습 데모(v1.4): 대본 LLM 이 항목마다 데모(입력·출력)를 대본과 함께 쓴다. 데모가 있는 항목은 그림 LLM 없이
+  LWalkthrough 로 그대로 그리고, 대본 문장이 그 입력을 말하는지 검사한다(화면과 대본 일치).
 - 자막: 문장 WAV 의 쉼에 맞춰 구절·단어 시각을 정한다(app/media/align.py).
 """
 from __future__ import annotations
@@ -35,7 +37,8 @@ HOOK_STYLES = {
     "myth": ("오해 깨기", "흔한 믿음을 뒤집는다", "스킬은 많이 깔수록 좋은 게 아니에요", "많을수록?", "딱 3개면 충분"),
     "before_after": ("전후 비교", "쓰기 전과 후를 대비한다(숫자는 참고 자료에 있을 때만)", "어제는 손으로, 오늘은 한 줄로 끝났어요", "손 → 한 줄", "차이를 만든 5개"),
 }
-NUMBER_WORDS = {1: ("하나", "한"), 2: ("둘", "두"), 3: ("셋", "세"), 4: ("넷", "네"), 5: ("다섯",), 6: ("여섯",), 7: ("일곱",)}
+NUMBER_WORDS = {1: ("하나", "한"), 2: ("둘", "두"), 3: ("셋", "세"), 4: ("넷", "네"), 5: ("다섯",), 6: ("여섯",), 7: ("일곱",),
+                8: ("여덟",), 9: ("아홉",), 10: ("열",)}
 TOLERANCE = 0.15       # 목록형은 문장을 빼서 맞추지 않는다(항목 구조). 넉넉히 두고 timeline 이 실제 길이로 다시 판정
 MIN_CHARS = 6
 FIRST_MIN = 12         # 항목 첫 문장(이름 + 한 줄 소개). '첫째는 pdf예요'(8자)는 카드가 1.6초만 보였다
@@ -44,19 +47,39 @@ FIRST_MIN = 12         # 항목 첫 문장(이름 + 한 줄 소개). '첫째는 
 PACING = {"lead": 0.15, "gap": 0.3, "tail": 0.12, "hold": 0.6}
 PAD_SEC = 0.4          # 장면 뒤 쉼
 ITEM_LINES = 3         # 항목 문장: 이름과 한 줄 소개 + 설명 둘
+MANY_ITEMS = 7         # 이 개수부터 항목 문장을 2개로 (v1.4 L26: 10개면 100초가 넘지 않게)
 BRACKET = re.compile(r"\[([^\[\]]+)\]")
 ENDING = re.compile(r"(요|죠|다|까|네|세요)[.?!~]*$")  # 끝맺는 말끝 (2026-10-31: 조각 문장을 따로 합성하면 끊겨 들린다)
-ORDINALS = ["첫", "두", "세", "네", "다섯", "여섯", "일곱"]
+ORDINALS = ["첫", "두", "세", "네", "다섯", "여섯", "일곱", "여덟", "아홉", "열"]
+# 실습 데모 (v1.4 L20~L22, 2026-11-01 사용자: 명령이 대본과 일치하고 직접 쳐 보여 달라)
+DEMO_KINDS = ["terminal", "code", "chat", "settings"]
+MAX_STEPS = 3
+DEMO_INPUT_CHARS, DEMO_OUTPUT_CHARS, DEMO_TITLE_CHARS = 60, 40, 16
+# 일본어 가나·한자 (2026-11-01 실제: 단계 그림에 '変更差分を点検'). 대본·화면 글자는 한국어·영어만
+FOREIGN = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f]")
+FOREIGN_TAG = "일본어·한자"
+# 최신 검색·반복 막기 (v1.4 L23·L24, 2026-11-01 사용자: '최근 인기 스킬 5개' 가 매번 같은 내용)
+RESEARCH_WORDS = ("최근", "최신", "인기", "요즘", "트렌드", "요새", "새로 나온", "핫한")
+REPEAT_TAG = "반복"
+MAX_REPEAT = 1
+RECENT_LISTICLES = 30
+TOPIC_STOP = {"최근", "최신", "인기", "인기많은", "요즘", "트렌드", "추천", "유용한", "많은", "좋은", "필수", "가지", "top", "best",
+              "외부", "꼭", "알아야", "쓰는", "진짜"}
 
 
 # ---------- 길이
+
+def item_lines(n: int) -> int:
+    """데모 없는 항목의 문장 수 (데모가 있으면 하나 더까지)"""
+    return ITEM_LINES if n < MANY_ITEMS else ITEM_LINES - 1
+
 
 def target_chars(target_sec: float, cps: float, n: int, outro_chars: int = 0) -> int:
     """대본(첫마디·항목·정리) 글자 수 목표. cps 는 무음을 뺀 말 구간의 초당 글자(카테고리 tts.speech_chars_per_sec).
     장면(첫마디 2 + 항목마다 2 + 정리 + 끝)과 문장 사이 쉼만큼 시간을 뺀다"""
     extra = 1 if outro_chars else 0
     scenes = 2 + 2 * n + 1 + extra
-    sentences = 3 + ITEM_LINES * n + 2 + extra
+    sentences = 3 + item_lines(n) * n + 2 + extra
     overhead = (scenes * (PACING["lead"] + PAD_SEC) + max(0, sentences - scenes) * PACING["gap"]
                 + sentences * PACING["tail"])
     outro_sec = outro_chars / cps if outro_chars else 0.0
@@ -88,9 +111,15 @@ def _flat_lines(data: dict[str, Any]) -> list[str]:
 
 def _schema(n: int) -> dict[str, Any]:
     s = {"type": "string"}
+    step = {"type": "object", "properties": {"input": s, "output": {"type": "array", "items": s, "maxItems": 4}},
+            "required": ["input", "output"], "additionalProperties": False}
+    demo = {"type": "object", "properties": {"kind": {"type": "string", "enum": [*DEMO_KINDS, "none"]}, "title": s,
+                                             "steps": {"type": "array", "items": step, "maxItems": MAX_STEPS}},
+            "required": ["kind", "title", "steps"], "additionalProperties": False}
     item = {"type": "object", "properties": {"name": s, "meta": s, "tagline": s, "badge": s,
-                                             "lines": {"type": "array", "items": s, "minItems": ITEM_LINES, "maxItems": ITEM_LINES}},
-            "required": ["name", "meta", "tagline", "badge", "lines"], "additionalProperties": False}
+                                             "lines": {"type": "array", "items": s, "minItems": item_lines(n), "maxItems": item_lines(n) + 1},
+                                             "demo": demo},
+            "required": ["name", "meta", "tagline", "badge", "lines", "demo"], "additionalProperties": False}
     card = {"type": "object", "properties": {k: s for k in ("kicker", "claim", "claimNote", "aside", "headline", "highlight")},
             "required": ["kicker", "claim", "claimNote", "aside", "headline", "highlight"], "additionalProperties": False}
     recap = {"type": "object", "properties": {"title": s, "subtitle": s, "lines": {"type": "array", "items": s, "minItems": 1, "maxItems": 2}},
@@ -109,8 +138,104 @@ def _core(text: str) -> str:
     return re.sub(r"[\s\W_]+", "", text).lower()
 
 
+def _strings(x: Any):
+    if isinstance(x, str):
+        yield x
+    elif isinstance(x, dict):
+        for v in x.values():
+            yield from _strings(v)
+    elif isinstance(x, list):
+        for v in x:
+            yield from _strings(v)
+
+
+def foreign_problems(data: Any) -> list[str]:
+    bad = [t for t in _strings(data) if FOREIGN.search(t)]
+    return [f"{FOREIGN_TAG}가 섞였다. 화면 글자·대본은 한국어와 영어로만 쓴다: {t}" for t in bad[:3]]
+
+
+def demo_of(item: dict[str, Any]) -> dict[str, Any]:
+    d = item.get("demo")
+    return d if isinstance(d, dict) and d.get("kind") in (*DEMO_KINDS, "none") else {"kind": "none", "title": "", "steps": []}
+
+
+def step_key(text: str) -> str:
+    """대본이 그대로 말해야 하는 입력의 앞부분: 앞 두 낱말 (예: 'npx skills add foo' → 'npxskills')"""
+    return _core(" ".join(str(text).split()[:2]))
+
+
+def check_demo(i: int, item: dict[str, Any], base: int = ITEM_LINES) -> list[str]:
+    demo, lines = demo_of(item), [split_emphasis(str(x))[0] for x in item.get("lines") or []]
+    steps = demo.get("steps") or []
+    if demo["kind"] == "none":
+        out = [f"{i}번 항목: 데모가 none 이면 steps 는 비운다"] if steps else []
+        if len(lines) != base:
+            out.append(f"{i}번 항목 문장은 {base}개(데모가 없으면, 지금 {len(lines)}개)")
+        return out
+    most = min(MAX_STEPS, len(lines) - 1)
+    if not 1 <= len(steps) <= most:
+        return [f"{i}번 항목 데모 단계는 1~{most}개(소개 뒤 문장 하나에 한 단계, 지금 {len(steps)}개)"]
+    out = []
+    if count_chars(str(demo.get("title", ""))) > DEMO_TITLE_CHARS:
+        out.append(f"{i}번 항목 demo.title 은 {DEMO_TITLE_CHARS}자 이내")
+    for j, st in enumerate(steps, start=1):
+        inp = str(st.get("input", "")).strip()
+        if not inp or len(inp) > DEMO_INPUT_CHARS:
+            out.append(f"{i}번 항목 데모 {j}단계 input 은 1~{DEMO_INPUT_CHARS}자")
+            continue
+        if any(len(str(o)) > DEMO_OUTPUT_CHARS for o in st.get("output") or []):
+            out.append(f"{i}번 항목 데모 {j}단계 output 한 줄은 {DEMO_OUTPUT_CHARS}자 이내")
+        key = step_key(inp)
+        if key and key not in _core(lines[j]):
+            out.append(f"{i}번 항목 데모 {j}단계 입력 '{' '.join(inp.split()[:2])}' 를 {j + 1}번째 문장에서 그대로 말한다"
+                       f"(화면과 대본 일치): {lines[j]}")
+    return out
+
+
+def should_research(topic: str, flag: bool | None) -> bool:
+    """사실 조사(웹 검색)를 할지: 명시(/top …, 검색 · API research)가 우선, 없으면 주제의 '최근·인기…' 같은 말"""
+    if flag is not None:
+        return bool(flag)
+    return any(w in topic for w in RESEARCH_WORDS)
+
+
+def topic_words(topic: str) -> set[str]:
+    return {w.lower() for w in re.findall(r"[가-힣A-Za-z0-9.+#-]{2,}", topic)} - TOPIC_STOP
+
+
+def used_items(ctx: StepContext, topic: str) -> list[str]:
+    """비슷한 주제(뜻 있는 2글자 이상 낱말이 겹치는)의 최근 목록형 영상에서 다룬 항목 이름. 최근 것부터, 겹침 없이"""
+    from sqlalchemy import select
+
+    from app.db.models import Job
+    mine = topic_words(topic)
+    if not mine:
+        return []
+    with ctx.db() as s:
+        rows = s.execute(select(Job.id, Job.topic).where(Job.category == "listicle", Job.id != ctx.job_id)
+                         .order_by(Job.created_at.desc(), Job.id.desc()).limit(RECENT_LISTICLES)).all()
+    out: list[str] = []
+    for jid, other in rows:
+        if not (mine & topic_words(other or "")):
+            continue
+        try:
+            lst = json.loads((ctx.settings.jobs_dir / jid / "script.json").read_text(encoding="utf-8")).get("listicle") or {}
+        except (OSError, ValueError):
+            continue
+        for it in lst.get("items") or []:
+            name = str(it.get("name") or "").strip()
+            if name and _core(name) not in {_core(x) for x in out}:
+                out.append(name)
+    return out
+
+
+def repeated(names: list[str], used: list[str]) -> list[str]:
+    seen = {_core(u) for u in used if _core(u)}
+    return [n for n in names if _core(n) in seen]
+
+
 def check_script(data: Any, *, n: int, given: list[str], max_sentence: int, target: int, has_facts: bool,
-                 source: str = "", recent_styles: list[str] | None = None) -> list[str]:
+                 source: str = "", recent_styles: list[str] | None = None, used: list[str] | None = None) -> list[str]:
     if not isinstance(data, dict):
         return ["JSON 객체가 필요하다"]
     items = data.get("items") or []
@@ -129,6 +254,13 @@ def check_script(data: Any, *, n: int, given: list[str], max_sentence: int, targ
             problems.append(f"{i}번 항목 첫 문장은 이름과 한 줄 소개를 함께 {FIRST_MIN}자 이상으로 (예: '첫 번째, 문서 작업을 도와주는 docx예요'): {lines[0]}")
         if count_chars(name) > 20:
             problems.append(f"{i}번 항목 name 은 20자 이내: {name}")
+        problems += check_demo(i, it, item_lines(n))
+    problems += foreign_problems({k: v for k, v in data.items() if k != "readings"})
+    if used and not given:
+        same = repeated([str(it.get("name", "")) for it in items], used)
+        if len(same) > MAX_REPEAT:
+            problems.append(f"{REPEAT_TAG}: 이전 영상에서 다룬 항목이 {len(same)}개({', '.join(same)}). "
+                            f"{MAX_REPEAT}개까지만 겹치게 다른 항목으로 바꾼다")
     style = data.get("hookStyle")
     if style not in HOOK_STYLES:
         problems.append(f"hookStyle 은 {', '.join(HOOK_STYLES)} 중 하나")
@@ -184,8 +316,15 @@ def _pack(data: dict[str, Any]) -> dict[str, Any]:
             out.append({"text": text, "emphasis": emph})
         return out
     hook = lines(data["hook"])
+    def demo(it):
+        d = demo_of(it)
+        if d["kind"] == "none":
+            return {"kind": "none", "title": "", "steps": []}
+        return {"kind": d["kind"], "title": str(d.get("title") or "").strip(),
+                "steps": [{"input": str(st["input"]).strip(), "output": [str(o) for o in st.get("output") or [] if str(o).strip()]}
+                          for st in d["steps"]]}
     items = [{"name": str(it["name"]).strip(), "meta": str(it.get("meta") or "").strip(), "tagline": str(it.get("tagline") or "").strip(),
-              "badge": str(it.get("badge") or "").strip(), "lines": lines(it["lines"])} for it in data["items"]]
+              "badge": str(it.get("badge") or "").strip(), "lines": lines(it["lines"]), "demo": demo(it)} for it in data["items"]]
     recap = {"title": str(data["recap"]["title"]).strip(), "subtitle": str(data["recap"].get("subtitle") or "").strip(),
              "lines": lines(data["recap"]["lines"])}
     spoken = [x["text"] for x in hook] + [x["text"] for it in items for x in it["lines"]] + [x["text"] for x in recap["lines"]]
@@ -213,6 +352,12 @@ def run_script(ctx: StepContext, job: dict[str, Any], cat: dict[str, Any], revie
     number_rule = ("참고 자료 사실 목록에 있는 숫자만 쓴다" if facts else
                    "참고 자료가 없으니 별 수·다운로드 수·가격·버전 같은 구체적인 숫자를 쓰지 않는다(항목 수 N 은 된다)")
     recent = recent_hooks(ctx)
+    used = [] if given else used_items(ctx, job["topic"])
+    cands = lst.get("candidates") or []
+    research_block = ((f"최신 검색 후보({lst.get('researchedAt') or '오늘'} 검색. 항목은 이 후보와 사실 목록 안에서 고른다):\n"
+                       + "\n".join(f"- {c.get('name')}: {c.get('why', '')}" for c in cands) + "\n") if cands else "")
+    used_block = (("이전 비슷한 주제 영상에서 이미 다룬 항목(같은 항목은 1개까지만. 새 항목을 우선한다):\n"
+                   + ", ".join(used) + "\n") if used else "")
     styles = "\n".join(f"  - {k} ({v[0]}): {v[1]}. 첫 문장 예 \"{v[2]}\", claim 예 \"{v[3]}\", headline 예 \"{v[4]}\""
                        for k, v in HOOK_STYLES.items())
     recent_block = ("최근 첫마디(같은 방식·같은 말투를 피한다, 최근 것부터):\n"
@@ -221,6 +366,7 @@ def run_script(ctx: StepContext, job: dict[str, Any], cat: dict[str, Any], revie
         "listicle_script", topic=job["topic"], count=n, hook_styles=styles, recent_hooks=recent_block, target_sec=job["targetDurationSec"], audience=cat.get("audience", ""),
         structure=rules.get("structure", ""), forbidden=", ".join(rules.get("forbidden", [])), max_sentence=max_sentence,
         min_chars=MIN_CHARS, target_chars=target, item_chars=round(target * 0.75 / n), given_items=given_items,
+        research_block=research_block, used_block=used_block, item_lines=item_lines(n), item_lines_demo=item_lines(n) + 1,
         facts_block=facts_block, number_rule=number_rule, review_feedback=review_feedback)
     source = _core(ctx.path("listicle_sources.txt").read_text(encoding="utf-8")) if ctx.path("listicle_sources.txt").exists() else ""
 
@@ -228,10 +374,10 @@ def run_script(ctx: StepContext, job: dict[str, Any], cat: dict[str, Any], revie
 
     def check(d: Any) -> list[str]:
         return check_script(d, n=n, given=given, max_sentence=max_sentence, target=target, has_facts=bool(facts), source=source,
-                            recent_styles=[s for s, _ in recent])
+                            recent_styles=[s for s, _ in recent], used=used)
 
     out = ask(ctx, messages, _schema(n), "listicle_script", check)
-    hard = [p for p in out.problems if not p.startswith((LENGTH_TAG, HOOK_TAG))]
+    hard = [p for p in out.problems if not p.startswith((LENGTH_TAG, HOOK_TAG, REPEAT_TAG))]
     if hard:
         raise StepFailure("deterministic", "목록형 대본 규칙을 지키지 못했다: " + "; ".join(hard)[:800], retry_from="script")
     if out.problems:
@@ -317,15 +463,49 @@ def check_visuals(data: Any, items: list[dict[str, Any]]) -> list[str]:
                 continue
             used[comp] = used.get(comp, 0) + 1
             problems += [f"{i}번 항목 {p}" for p in check_props(comp, v.get("props"))]
+            problems += [f"{i}번 항목 {p}" for p in foreign_problems(v.get("props"))]
     for comp, k in used.items():
         if k > 2:
             problems.append(f"{comp} 를 {k}번 썼다. 같은 그림은 두 번까지")
     return problems
 
 
+def demo_picks(items: list[dict[str, Any]]) -> list[list[dict[str, Any]] | None]:
+    """데모가 있는 항목은 그 데모 그대로 LWalkthrough 한 장, 없는 항목은 None(그림 LLM 이 고른다)"""
+    out: list[list[dict[str, Any]] | None] = []
+    for it in items:
+        d = demo_of(it)
+        if d["kind"] == "none" or not d.get("steps"):
+            out.append(None)
+            continue
+        props = {"kind": d["kind"], "title": d.get("title") or "", "steps": d["steps"]}
+        out.append([{"component": "LWalkthrough", "props": props}])
+    return out
+
+
 def run_scenes(ctx: StepContext, script: dict[str, Any], job: dict[str, Any], cat: dict[str, Any]) -> None:
     lst = script["listicle"]
+    demos = demo_picks(lst["items"])
+    meta, picked = _pick_visuals(ctx, [it for it, d in zip(lst["items"], demos) if d is None], job)
+    rest = iter(picked)
+    picks = [d if d is not None else next(rest) for d in demos]
+    scenes = build_scenes(lst, picks, outro_for(cat, job["jobId"]))
     items = lst["items"]
+    ctx.write_json("scenes.json", {
+        "schemaVersion": 1, "jobId": job["jobId"], "title": script["titleCandidates"][0],
+        "tracker": {"items": [{"name": it["name"], **({"meta": it["meta"]} if it["meta"] else {})} for it in items]},
+        "readings": script.get("readings") or {},
+        "scenes": [{"id": f"s{i:02d}", **sc} for i, sc in enumerate(scenes, start=1)],
+        "meta": meta,
+    })
+
+
+def _pick_visuals(ctx: StepContext, items: list[dict[str, Any]], job: dict[str, Any]
+                  ) -> tuple[dict[str, Any], list[list[dict[str, Any]]]]:
+    """데모 없는 항목의 설명 그림을 LLM 이 고른다. 못 고르면 아이콘 장면"""
+    picks: list[list[dict[str, Any]]] = [[_fallback(it)] * _visual_count(it) for it in items]
+    if not items:
+        return {"visuals": "demo"}, picks
     catalog = "\n".join(f"- {c}: {TEMPLATES[c]['use']}. props: {json.dumps(TEMPLATES[c]['props']['properties'], ensure_ascii=False)}"
                         for c in DETAIL_VISUALS)
     listing = "\n".join(f"{i}. {it['name']} ({it['tagline']}) — 설명: {' / '.join(x['text'] for x in it['lines'][1:])}"
@@ -335,7 +515,6 @@ def run_scenes(ctx: StepContext, script: dict[str, Any], job: dict[str, Any], ca
         listing += "\n\n사실 목록(숫자는 여기 것만):\n" + "\n".join(f"- {f}" for f in facts)
     messages, version = render_messages("listicle_visuals", topic=job["topic"], catalog=catalog, items=listing, count=len(items),
                                         visual_rule="1")
-    picks: list[list[dict[str, Any]]] = [[_fallback(it)] * _visual_count(it) for it in items]
     meta: dict[str, Any] = {"promptVersion": version}
     try:
         out = ask(ctx, messages, _visual_schema(len(items)), "listicle_visuals", lambda d: check_visuals(d, items))
@@ -348,21 +527,14 @@ def run_scenes(ctx: StepContext, script: dict[str, Any], job: dict[str, Any], ca
                 if len(vs) == _visual_count(it):
                     picks[i] = [{"component": v["component"], "props": v["props"]} for v in vs]
                 else:
-                    ctx.note_degraded(f"{i + 1}번 항목 그림을 고르지 못해 아이콘 장면으로")
+                    ctx.note_degraded(f"'{it['name']}' 항목 그림을 고르지 못해 아이콘 장면으로")
         if out.problems:
             meta["problems"] = out.problems[:10]
     except StepFailure as e:
         if e.kind != "transient":
             raise
         ctx.note_degraded(f"그림 고르기 실패({e.message[:120]}), 모두 아이콘 장면으로")
-    scenes = build_scenes(lst, picks, outro_for(cat, job["jobId"]))
-    ctx.write_json("scenes.json", {
-        "schemaVersion": 1, "jobId": job["jobId"], "title": script["titleCandidates"][0],
-        "tracker": {"items": [{"name": it["name"], **({"meta": it["meta"]} if it["meta"] else {})} for it in items]},
-        "readings": script.get("readings") or {},
-        "scenes": [{"id": f"s{i:02d}", **sc} for i, sc in enumerate(scenes, start=1)],
-        "meta": meta,
-    })
+    return meta, picks
 
 
 def _scene(kind: str, component: str, props: dict[str, Any], lines: list[dict[str, str]], index: int | None = None,

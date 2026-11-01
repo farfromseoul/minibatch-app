@@ -5,6 +5,8 @@ import { spring, useCurrentFrame, useVideoConfig } from "remotion";
 import type { ThemeSpec, Tokens } from "./types";
 
 export const ThemeContext = createContext<ThemeSpec | null>(null);
+/** 작업 폴더 파일 주소 앞부분 (실습 리뷰 결과물 그림, D46). Listicle 이 넣는다 */
+export const AssetContext = createContext<string>("");
 
 export const useTheme = (): ThemeSpec => {
   const t = useContext(ThemeContext);
