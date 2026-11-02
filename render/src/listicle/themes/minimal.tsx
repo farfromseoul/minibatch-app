@@ -197,8 +197,11 @@ export function makeMinimal(c: Palette): ThemeSpec {
     const cells = recapCells(n, { x: L.side, y: 480, w: L.width, h: 760 }, n >= 7 ? 28 : 0, 110);
     return (
       <AbsoluteFill>
-        <div style={{ ...abs(L.side, 270, L.width), fontSize: fit(props.title, L.width, 96, 56), fontWeight: 800, color: c.text, letterSpacing: -3, ...rise(a, 18) }}>{props.title}</div>
-        {props.subtitle ? <div style={{ ...abs(L.side, 390), fontSize: 34, color: c.sub, fontWeight: 600, ...rise(a, 12) }}>{props.subtitle}</div> : null}
+        {/* 제목·부제는 한 묶음: 부제가 제목 크기를 따라 내려간다 (2026-11-02: 부제가 큰 제목에 붙어 보였다) */}
+        <div style={{ ...abs(L.side, 250, L.width), display: "flex", flexDirection: "column", gap: 18, ...rise(a, 18) }}>
+          <div style={{ fontSize: fit(props.title, L.width, 96, 56), fontWeight: 800, color: c.text, letterSpacing: -3, lineHeight: 1.1 }}>{props.title}</div>
+          {props.subtitle ? <div style={{ fontSize: 34, color: c.sub, fontWeight: 600, lineHeight: 1.3 }}>{props.subtitle}</div> : null}
+        </div>
         {props.items.map((it, i) => {
           const cell = cells[i];
           const p = ease(frame, 6 + Math.round((durationInFrames * 0.35 * i) / n), 16 + Math.round((durationInFrames * 0.35 * i) / n));

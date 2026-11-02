@@ -503,10 +503,13 @@ export const LRecap: React.FC<LSceneProps<{ title: string; subtitle?: string; it
   const rail = twoCols ? 0 : phase(frame, durationInFrames, 0.05, 0.6);
   return (
     <AbsoluteFill>
-      <div style={{ ...abs(L.side, 262), fontSize: fit(props.title, 900, 92, 54), fontWeight: 900, fontFamily: k.titleFont, letterSpacing: -3, ...rise(head, 24) }}>
-        <Accent>{props.title}</Accent>
+      {/* 제목·부제는 한 묶음: 부제가 제목 크기를 따라 내려간다 (2026-11-02) */}
+      <div style={{ ...abs(L.side, 250, L.width), display: "flex", flexDirection: "column", gap: 18, ...rise(head, 24) }}>
+        <div style={{ fontSize: fit(props.title, 900, 92, 54), fontWeight: 900, fontFamily: k.titleFont, letterSpacing: -3, lineHeight: 1.1 }}>
+          <Accent>{props.title}</Accent>
+        </div>
+        {props.subtitle ? <div style={{ fontSize: 36, color: k.sub, fontWeight: 600, lineHeight: 1.3 }}>{props.subtitle}</div> : null}
       </div>
-      {props.subtitle ? <div style={{ ...abs(L.side, 384), fontSize: 36, color: k.sub, fontWeight: 600, ...rise(head, 18) }}>{props.subtitle}</div> : null}
       <div style={{ ...abs(L.side + 36, top + rowH / 2, 4, (n - 1) * (rowH + 18) * rail), borderRadius: 2, background: k.gradient }} />
       {props.items.map((it, i) => {
         const p = at(i, 6 + Math.round((durationInFrames * 0.3 * i) / n));
@@ -756,10 +759,10 @@ export const LVerdict: React.FC<LSceneProps<{ title: string; pros: string[]; con
   const who = phase(frame, durationInFrames, 0.45, 0.6);
   return (
     <AbsoluteFill>
-      <div style={{ ...abs(L.side, 270, L.width), fontSize: fit(props.title, L.width, 92, 56), fontWeight: k.titleWeight, color: k.text, letterSpacing: -3, ...rise(head, 18) }}>
-        {props.title}
+      <div style={{ ...abs(L.side, 250, L.width), display: "flex", flexDirection: "column", gap: 18, ...rise(head, 18) }}>
+        <div style={{ fontSize: fit(props.title, L.width, 92, 56), fontWeight: k.titleWeight, color: k.text, letterSpacing: -3, lineHeight: 1.1 }}>{props.title}</div>
+        {props.meta ? <div style={{ fontFamily: k.mono, fontSize: 26, color: k.muted, lineHeight: 1.3 }}>{props.meta}</div> : null}
       </div>
-      {props.meta ? <div style={{ ...abs(L.side, 392), fontFamily: k.mono, fontSize: 26, color: k.muted, ...rise(head, 12) }}>{props.meta}</div> : null}
       {rows.map((r, i) => {
         const p = phase(frame, durationInFrames, 0.06 + i * 0.08, 0.14 + i * 0.08);
         return (
