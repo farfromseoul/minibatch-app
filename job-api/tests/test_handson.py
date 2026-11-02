@@ -19,7 +19,8 @@ from tests.test_media_steps import FakeWorker
 
 PNG = bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000"
                     "1f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082")
-PLAN = {"feature": {"name": "Claude Code", "released": "2026-10", "what": "말로 시키면 파일을 만들어 준다", "howToUse": "터미널에서 claude"},
+PLAN = {"feature": {"name": "Claude Code", "kind": "cli_feature", "released": "2026-10", "what": "말로 시키면 파일을 만들어 준다", "howToUse": "터미널에서 claude"},
+        "runnable": True, "notRunnableReason": "", "skills": [],
         "facts": ["Claude Code 는 터미널에서 쓰는 코딩 도구다", "파일을 읽고 쓴다", "셸 명령을 실행한다"],
         "sources": [{"title": "docs", "url": "https://code.claude.com/docs/en/overview"}],
         "tasks": [{"id": "t1", "goal": "막대 차트 페이지", "prompt": "막대 차트를 chart.html 에 그려 줘. 값은 3, 5, 2", "why": "결과가 눈에 보인다",
@@ -105,7 +106,39 @@ class HandsOnCase(ListicleCase):
             return s.get(Job, job_id).input
 
 
+SKILL_PLAN = {**PLAN, "feature": {**PLAN["feature"], "name": "skill-creator", "kind": "skill"},
+              "skills": [{"name": "skill-creator", "repo": "anthropics/skills", "path": "skills/skill-creator"}],
+              "tasks": [{**PLAN["tasks"][0], "prompt": "skill-creator 스킬로 메모 정리 스킬 초안을 notes-skill.md 에 써 줘",
+                         "check": {"kind": "fileExists", "file": "notes-skill.md", "text": ""}}]}
+
+
 class PlanTest(unittest.TestCase):
+    def test_skill_feature_uses_the_real_official_skill(self):
+        self.assertEqual(ho.check_plan(SKILL_PLAN), [])
+        no_skill = {**SKILL_PLAN, "skills": []}
+        self.assertTrue(any("공식 스킬" in p for p in ho.check_plan(no_skill)))
+        other_repo = {**SKILL_PLAN, "skills": [{**SKILL_PLAN["skills"][0], "repo": "someone/skills"}]}
+        self.assertTrue(any("허용" in p for p in ho.check_plan(other_repo)))
+        unused = {**SKILL_PLAN, "tasks": [{**SKILL_PLAN["tasks"][0], "prompt": "메모 정리 문서를 notes.md 에 써 줘"}]}
+        self.assertTrue(any("스킬 이름" in p for p in ho.check_plan(unused)))
+
+    def test_imitating_a_skill_is_rejected(self):
+        """2026-11-02 실제: 진짜 frontend-design 대신 '지침 요약본' 스킬을 실험 중에 만들게 했다"""
+        fake = {**PLAN, "tasks": [{**PLAN["tasks"][0], "prompt": ".claude/skills/design-demo/SKILL.md 를 만들고 frontend-design 공개 지침 일부의 요약본을 넣어 적용해 bakery.html 을 만들어라"}]}
+        self.assertTrue(any("흉내" in p for p in ho.check_plan(fake)))
+
+    def test_not_runnable_needs_a_reason(self):
+        self.assertEqual(ho.check_plan({**PLAN, "runnable": False, "notRunnableReason": "브라우저 로그인이 필요하다", "tasks": []}), [])
+        self.assertTrue(ho.check_plan({**PLAN, "runnable": False, "notRunnableReason": "", "tasks": []}))
+
+    def test_repeat_is_flagged_unless_named_in_topic(self):
+        used = ["frontend-design", "pdf"]
+        fd = {**SKILL_PLAN, "feature": {**SKILL_PLAN["feature"], "name": "frontend-design"},
+              "skills": [{"name": "frontend-design", "repo": "anthropics/skills", "path": "skills/frontend-design"}],
+              "tasks": [{**SKILL_PLAN["tasks"][0], "prompt": "frontend-design 스킬로 빵집 소개 bakery.html 을 만들어 줘"}]}
+        self.assertTrue([p for p in ho.check_plan(fd, used=used, topic="클로드 코드 유용한 스킬") if p.startswith(ho.REPEAT_TAG)])
+        self.assertEqual(ho.check_plan(fd, used=used, topic="frontend-design 스킬 써 보기"), [])
+
     def test_plan_must_stay_offline_and_ordered(self):
         self.assertEqual(ho.check_plan(PLAN), [])
         bad = json.loads(json.dumps(PLAN))
@@ -199,6 +232,45 @@ class HandsOnFlowTest(HandsOnCase):
         st = self.get(f"/jobs/{job_id}").json()
         self.assertEqual(st["status"], "FAILED")
         self.assertIn("모두 실패", self.get(f"/jobs/{job_id}/steps/lab").json()["error"])
+
+    def test_not_runnable_feature_makes_no_video(self):
+        job_id = self.try_job("/try ChatGPT 앱의 새 캔버스 버튼")
+        self.llm.responses = [{**PLAN, "runnable": False, "notRunnableReason": "웹 앱 로그인이 필요해 실험 환경에서 돌릴 수 없다", "tasks": []}]
+        self.run_step(job_id, "topic")
+        st = self.get(f"/jobs/{job_id}/steps/topic").json()
+        self.assertEqual((st["status"], st["kind"], st["retryFrom"]), ("failed", "deterministic", None))
+        self.assertIn("실제로 돌릴 수 없어", st["error"])
+
+    def test_official_skill_goes_to_runner_and_plan_message(self):
+        job_id = self.try_job("/try skill-creator 스킬")
+        self.llm.responses = [SKILL_PLAN]
+        self.run_step(job_id, "topic")
+        self.run_step(job_id, "lab")
+        msg = [m for m in self.tg.sent("sendMessage") if "reply_markup" in m][-1]["text"]
+        self.assertIn("https://github.com/anthropics/skills/tree/main/skills/skill-creator", msg)
+        self.tg.press(f"lp:{job_id}:go")
+        self.poll()
+        self.lab_runner.results = {"t1": OK_RESULT}
+        self.run_step(job_id, "lab")
+        body = self.lab_runner.requests[0][3]
+        self.assertEqual(body["skills"], [{"name": "skill-creator", "repo": "anthropics/skills", "path": "skills/skill-creator"}])
+
+    def test_used_features_are_told_to_the_planner(self):
+        self.previous_review("frontend-design")
+        job_id = self.try_job("/try 클로드 코드 유용한 최신 스킬")
+        self.llm.responses = [PLAN]
+        self.run_step(job_id, "topic")
+        self.assertIn("frontend-design", self.llm.requests[0]["messages"][-1]["content"])
+
+    def previous_review(self, name):
+        old = self.try_job("/try 예전 스킬 실험")
+        d = self.job_dir(old)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "job.json").write_text(json.dumps({"review": {"feature": {"name": name}, "skills": [{"name": name}]}}), encoding="utf-8")
+        from app.db.models import Job
+        with self.app.state.db() as s:
+            s.get(Job, old).status = "CANCELLED"
+            s.commit()
 
     def test_drop_cancels_and_replan_resets(self):
         job_id = self.try_job()

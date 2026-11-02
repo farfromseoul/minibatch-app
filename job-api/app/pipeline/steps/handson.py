@@ -25,6 +25,11 @@ from .llm_common import ask, meta_of
 TOOLS = {"claude": "Claude Code"}  # v1 은 Claude Code 만 (기획서 Q1). codex·gemini 는 같은 틀로 더한다
 TASK_IDS = ["t1", "t2", "t3"]
 MAX_TASKS = 3
+SKILL_REPOS = ("anthropics/skills",)  # 실행기가 받아 줄 수 있는 공식 스킬 저장소 (실행기 LAB_SKILL_REPOS 와 같게)
+REPEAT_TAG = "반복"
+# 흉내 막기 (2026-11-02 실제: 진짜 frontend-design 대신 '공개 지침 요약본' 스킬을 실험 중에 만들게 했다)
+IMITATION_WORDS = (".claude/skills", "요약본", "요약한 스킬", "흉내", "비슷한 스킬", "대신할 스킬")
+SKILL_FILE = re.compile(r"(^|[^a-z0-9-])skill\.md")  # 스킬 정의 파일을 직접 만들게 하기 (notes-skill.md 같은 이름은 괜찮다)
 OFFLINE_WORDS = ("http://", "https://", "설치", "install", "pip ", "npm i", "brew ", "curl ", "wget ", "검색", "웹에서")
 FAIL_WORDS = ("실패", "못 ", "못했", "못 했", "안 됐", "안됐", "안 돼", "시간 안에", "시간을 넘")
 NUMBER = re.compile(r"\d+(?:\.\d+)?")
@@ -32,12 +37,17 @@ TOLERANCE = 0.2
 
 _S = {"type": "string"}
 PLAN_SCHEMA = {"type": "object", "properties": {
-    "feature": {"type": "object", "properties": {"name": _S, "released": _S, "what": _S, "howToUse": _S},
-                "required": ["name", "released", "what", "howToUse"], "additionalProperties": False},
+    "feature": {"type": "object", "properties": {"name": _S, "kind": {"type": "string", "enum": ["skill", "cli_feature", "other"]},
+                                                 "released": _S, "what": _S, "howToUse": _S},
+                "required": ["name", "kind", "released", "what", "howToUse"], "additionalProperties": False},
+    "runnable": {"type": "boolean"}, "notRunnableReason": _S,
+    "skills": {"type": "array", "maxItems": 2, "items": {
+        "type": "object", "properties": {"name": _S, "repo": _S, "path": _S}, "required": ["name", "repo", "path"],
+        "additionalProperties": False}},
     "facts": {"type": "array", "items": _S, "minItems": 3, "maxItems": 15},
     "sources": {"type": "array", "minItems": 1, "maxItems": 8, "items": {
         "type": "object", "properties": {"title": _S, "url": _S}, "required": ["title", "url"], "additionalProperties": False}},
-    "tasks": {"type": "array", "minItems": 1, "maxItems": MAX_TASKS, "items": {
+    "tasks": {"type": "array", "minItems": 0, "maxItems": MAX_TASKS, "items": {
         "type": "object", "properties": {
             "id": {"type": "string", "enum": TASK_IDS}, "goal": _S, "prompt": _S, "why": _S,
             "check": {"type": "object", "properties": {"kind": {"type": "string", "enum": ["fileExists", "contains", "none"]},
@@ -45,14 +55,40 @@ PLAN_SCHEMA = {"type": "object", "properties": {
                       "required": ["kind", "file", "text"], "additionalProperties": False},
             "timeoutSec": {"type": "integer", "minimum": 60, "maximum": 600}},
         "required": ["id", "goal", "prompt", "why", "check", "timeoutSec"], "additionalProperties": False}}},
-    "required": ["feature", "facts", "sources", "tasks"], "additionalProperties": False}
+    "required": ["feature", "runnable", "notRunnableReason", "skills", "facts", "sources", "tasks"], "additionalProperties": False}
 
 
-def check_plan(d: Any) -> list[str]:
+def _core(text: str) -> str:
+    return re.sub(r"[\s\W_]+", "", str(text)).lower()
+
+
+def check_plan(d: Any, *, allowed_repos: tuple = SKILL_REPOS, used: list[str] | tuple = (), topic: str = "") -> list[str]:
     if not isinstance(d, dict):
         return ["JSON 객체가 필요하다"]
     out = []
+    feature = d.get("feature") or {}
+    if d.get("runnable") is False:  # 실험 환경에서 진짜로 돌릴 수 없으면 흉내 내지 않고 만들지 않는다
+        return [] if str(d.get("notRunnableReason", "")).strip() else ["runnable 이 false 면 notRunnableReason 에 이유를 쓴다"]
     tasks = d.get("tasks") or []
+    if not tasks:
+        out.append("tasks 는 1개 이상")
+    skills = [sk for sk in d.get("skills") or [] if isinstance(sk, dict)]
+    if feature.get("kind") == "skill" and not skills:
+        out.append("스킬을 소개하면 그 공식 스킬을 skills 에 적는다(저장소·경로). 공식 저장소에 없어 받을 수 없으면 runnable false")
+    for sk in skills:
+        if sk.get("repo") not in allowed_repos:
+            out.append(f"스킬 저장소는 허용 목록({', '.join(allowed_repos)})만: {sk.get('repo')}. 아니면 runnable false")
+        if not re.match(r"^[a-z0-9][a-z0-9-]{0,39}$", str(sk.get("name", ""))) or ".." in str(sk.get("path", "")).split("/"):
+            out.append(f"스킬 name·path 형식이 틀렸다: {sk.get('name')} {sk.get('path')}")
+    for t in tasks:
+        low = str(t.get("prompt", "")).lower()
+        if any(w in low for w in IMITATION_WORDS) or SKILL_FILE.search(low):
+            out.append(f"{t.get('id')} 소개하는 스킬·기능을 실험 중에 만들거나 요약해 흉내 내지 않는다. 받은 공식 스킬을 그대로 쓴다: {low[:60]}")
+        if skills and not any(_core(sk.get("name", "")) in _core(low) for sk in skills):
+            out.append(f"{t.get('id')} prompt 에 쓸 스킬 이름({', '.join(sk.get('name', '') for sk in skills)})을 넣어 그 스킬을 쓰게 한다")
+    name = _core(feature.get("name", ""))
+    if name and any(name == _core(u) for u in used) and name not in _core(topic):
+        out.append(f"{REPEAT_TAG}: '{feature.get('name')}' 는 이전 영상에서 다뤘다. 다른 기능을 고른다(사용자가 이름을 적었을 때만 같은 것)")
     if [t.get("id") for t in tasks] != TASK_IDS[:len(tasks)]:
         out.append("tasks 의 id 는 t1, t2, t3 차례로")
     for t in tasks:
@@ -73,14 +109,49 @@ def check_plan(d: Any) -> list[str]:
     return out
 
 
+def used_features(ctx: StepContext, topic: str) -> list[str]:
+    """이전 실습 리뷰가 다룬 기능·스킬 이름 + 비슷한 주제의 목록형 항목 (반복 막기 C, 2026-11-02)"""
+    from sqlalchemy import select
+
+    from app.db.models import Job
+
+    from .listicle import used_items
+    with ctx.db() as s:
+        ids = s.scalars(select(Job.id).where(Job.category == "hands-on", Job.id != ctx.job_id)
+                        .order_by(Job.created_at.desc()).limit(30)).all()
+    out: list[str] = []
+    for jid in ids:
+        try:
+            rv = json.loads((ctx.settings.jobs_dir / jid / "job.json").read_text(encoding="utf-8")).get("review") or {}
+        except (OSError, ValueError):
+            continue
+        out += [str((rv.get("feature") or {}).get("name") or "")] + [str(sk.get("name") or "") for sk in rv.get("skills") or []]
+    out += used_items(ctx, topic)
+    seen, uniq = set(), []
+    for x in out:
+        if x and _core(x) not in seen:
+            seen.add(_core(x))
+            uniq.append(x)
+    return uniq
+
+
 def make_plan(ctx: StepContext, topic: str, req: dict[str, Any], cat: dict[str, Any]) -> dict[str, Any]:
     tool = str(req.get("tool") or "claude")
     rv = cat.get("review_video") or {}
+    repos = tuple(rv.get("skill_repos") or SKILL_REPOS)
+    used = used_features(ctx, topic)
     messages, version = render_messages("handson_plan", topic=topic, tool=TOOLS.get(tool, tool), max_tasks=int(rv.get("max_tasks", MAX_TASKS)),
-                                        task_timeout=int(rv.get("task_timeout_sec", 600)))
-    out = ask(ctx, messages, PLAN_SCHEMA, "research", check_plan)  # 이름이 research 라 중계기가 웹 검색을 켠다 (D45)
+                                        task_timeout=int(rv.get("task_timeout_sec", 600)), skill_repos=", ".join(repos),
+                                        used=(", ".join(used) if used else "없음"))
+    out = ask(ctx, messages, PLAN_SCHEMA, "research",  # 이름이 research 라 중계기가 웹 검색을 켠다 (D45)
+              lambda d: check_plan(d, allowed_repos=repos, used=used, topic=topic))
+    hard = [p for p in out.problems if not p.startswith(REPEAT_TAG)]
+    if hard:
+        raise StepFailure("deterministic", "실험 계획 규칙을 지키지 못했다: " + "; ".join(hard)[:600], retry_from="topic")
     if out.problems:
-        raise StepFailure("deterministic", "실험 계획 규칙을 지키지 못했다: " + "; ".join(out.problems)[:600], retry_from="topic")
+        ctx.note_degraded("; ".join(out.problems)[:300])
+    if out.data.get("runnable") is False:
+        raise StepFailure("deterministic", f"이 기능은 실험 환경에서 실제로 돌릴 수 없어 만들지 않는다: {out.data.get('notRunnableReason', '')}"[:600])
     model = (out.result.model if out.result else "") or ""
     if model.startswith("fallback:"):
         ctx.note_degraded(f"실험 계획을 검색 없는 대체 모델({model})이 만들었다. 계획을 꼭 확인")
@@ -93,6 +164,7 @@ def make_plan(ctx: StepContext, topic: str, req: dict[str, Any], cat: dict[str, 
         tasks.append({"id": t["id"], "goal": t["goal"].strip(), "prompt": t["prompt"].strip(), "why": t["why"].strip(), "check": check,
                       "timeoutSec": min(int(t["timeoutSec"]), int(rv.get("task_timeout_sec", 600)))})
     return {"feature": {k: str(v).strip() for k, v in d["feature"].items()}, "tool": tool, "toolLabel": TOOLS.get(tool, tool),
+            "skills": [{"name": str(sk["name"]), "repo": str(sk["repo"]), "path": str(sk["path"]).strip("/")} for sk in d.get("skills") or []],
             "facts": [str(f) for f in d["facts"]], "sources": [{"title": str(x["title"]), "url": str(x["url"])} for x in d["sources"]
                                                               if str(x["url"]).startswith(("http://", "https://"))],
             "tasks": tasks, "planMeta": meta_of(out, version)}
@@ -108,6 +180,8 @@ def plan_text(job_id: str, topic: str, rv: dict[str, Any]) -> str:
         cond = (f"{c['fileExists']} 파일이 생기면 성공" if c.get("fileExists") else
                 f"{c['contains']['file']} 에 '{c['contains']['text']}' 가 있으면 성공" if c.get("contains") else "오류 없이 끝나면 성공")
         lines += [f"[{t['id']}] {t['goal']} (최대 {t['timeoutSec']}초)", f"  시킬 말: {t['prompt']}", f"  판정: {cond}"]
+    for sk in rv.get("skills") or []:
+        lines.insert(4, f"공식 스킬(실험 밖에서 받아 읽기 전용으로): {sk['name']} — https://github.com/{sk['repo']}/tree/main/{sk['path']}")
     lines += ["", "실험 컨테이너: 인터넷·DNS 차단(Anthropic API 만), 작업 폴더 하나만, 웹 검색·웹 읽기 도구 끔",
               "출처: " + ", ".join(x["url"] for x in (rv.get("sources") or [])[:3])]
     return "\n".join(lines)
@@ -214,8 +288,10 @@ def run_script(ctx: StepContext, job: dict[str, Any], cat: dict[str, Any], revie
         (f"\n  마지막 답: {t['final'][:200]}" if t["final"] else "")
         for t in evidence["tasks"])
     f = rv["feature"]
+    skills = ", ".join(sk["name"] for sk in rv.get("skills") or [])
     messages, version = render_messages(
-        "handson_script", topic=job["topic"], tool=rv["toolLabel"], feature=f"{f['name']} ({f['released']}): {f['what']}",
+        "handson_script", topic=job["topic"], tool=rv["toolLabel"],
+        feature=f"{f['name']} ({f['released']}): {f['what']}" + (f" / 실험에 넣은 공식 스킬: {skills}" if skills else ""),
         facts="\n".join(f"- {x}" for x in rv.get("facts") or []), evidence=ev_text, count=n, target_chars=target,
         max_sentence=max_sentence, min_chars=MIN_CHARS, audience=cat.get("audience", ""),
         forbidden=", ".join(rules.get("forbidden", [])), review_feedback=review_feedback)

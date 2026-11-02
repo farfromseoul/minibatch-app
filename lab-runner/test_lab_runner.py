@@ -132,5 +132,86 @@ class HttpTest(unittest.TestCase):
         self.assertEqual((c.token, c.network, c.task_timeout_sec), (TOKEN, "minibatch-lab", 600))
 
 
+
+# ---------- 공식 스킬 받기 (실습 리뷰 A, 2026-11-02 사용자: 진짜 스킬로 시연)
+
+import io
+import tarfile
+
+
+def tarball(files, root="anthropics-skills-abc123"):
+    """GitHub tarball 모양: 맨 위 폴더 하나 아래 저장소 파일들. files: {경로: 내용 또는 ("symlink", 대상)}"""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, data in files.items():
+            info = tarfile.TarInfo(f"{root}/{name}" if not name.startswith("/") and not name.startswith("..") else name)
+            if isinstance(data, tuple):
+                info.type, info.linkname = tarfile.SYMTYPE, data[1]
+                tf.addfile(info)
+            else:
+                raw = data.encode()
+                info.size = len(raw)
+                tf.addfile(info, io.BytesIO(raw))
+    return buf.getvalue()
+
+
+class FakeFetch:
+    def __init__(self, data):
+        self.data, self.urls = data, []
+
+    def __call__(self, url, timeout=None):
+        self.urls.append(url)
+        return io.BytesIO(self.data)
+
+
+GOOD_TAR = {"skills/frontend-design/SKILL.md": "---\nname: frontend-design\n---\n지침", "skills/frontend-design/ref/a.md": "참고",
+            "skills/pdf/SKILL.md": "pdf", "README.md": "x"}
+SKILL = {"name": "frontend-design", "repo": "anthropics/skills", "path": "skills/frontend-design"}
+
+
+class SkillFetchTest(unittest.TestCase):
+    def runner(self, data=GOOD_TAR, **kw):
+        self.cache = tempfile.mkdtemp()
+        self.fetch = FakeFetch(tarball(data) if isinstance(data, dict) else data)
+        return lr.Runner(cfg(skill_cache=self.cache, **kw), run=FakeDocker(), fetch=self.fetch)
+
+    def test_only_that_skill_folder_is_extracted_and_mounted_read_only(self):
+        r = self.runner()
+        d = FakeDocker()
+        r._run = d
+        r.start({**BODY, "tasks": [{"id": "t1"}], "skills": [SKILL]}, background=False)
+        self.assertEqual(self.fetch.urls, ["https://api.github.com/repos/anthropics/skills/tarball"])
+        base = os.path.join(self.cache, BODY["jobId"], "frontend-design")
+        self.assertTrue(os.path.isfile(os.path.join(base, "SKILL.md")))
+        self.assertTrue(os.path.isfile(os.path.join(base, "ref", "a.md")))
+        self.assertFalse(os.path.exists(os.path.join(base, "..", "pdf")))
+        run = [c for c in d.calls if c[1] == "run"][0]
+        self.assertIn(f"{base}:/work/workspace/.claude/skills/frontend-design:ro", run)
+        self.assertEqual(r.runs[BODY["jobId"]]["skills"], [{"name": "frontend-design", "files": 2}])
+
+    def test_repo_must_be_allowed(self):
+        r = self.runner()
+        with self.assertRaises(ValueError):
+            r.validate({**BODY, "skills": [{**SKILL, "repo": "evil/skills"}]})
+        for bad in ({**SKILL, "path": "../etc"}, {**SKILL, "name": "a b"}, {**SKILL, "path": "/abs"}):
+            with self.assertRaises(ValueError, msg=bad):
+                r.validate({**BODY, "skills": [bad]})
+
+    def test_missing_skill_md_or_unsafe_entries_fail_the_run(self):
+        for data in ({"skills/frontend-design/readme.txt": "no skill"},
+                     {"skills/frontend-design/SKILL.md": "x", "skills/frontend-design/link": ("symlink", "/etc/passwd")}):
+            r = self.runner(data)
+            r.start({**BODY, "tasks": [{"id": "t1"}], "skills": [SKILL]}, background=False)
+            rec = r.runs[BODY["jobId"]]
+            self.assertEqual(rec["status"], "error", data)
+            self.assertIn("스킬", rec["error"])
+            self.assertFalse([c for c in r._run.calls if c[1] == "run"])  # 실험은 돌리지 않는다
+
+    def test_size_limit(self):
+        r = self.runner({"skills/frontend-design/SKILL.md": "x" * 2000}, skill_max_bytes=1000)
+        r.start({**BODY, "tasks": [{"id": "t1"}], "skills": [SKILL]}, background=False)
+        self.assertEqual(r.runs[BODY["jobId"]]["status"], "error")
+
+
 if __name__ == "__main__":
     unittest.main()

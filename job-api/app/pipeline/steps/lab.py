@@ -59,7 +59,8 @@ class LabStep:
                                                      "check": t.get("check") or {}}, ensure_ascii=False), encoding="utf-8")
         headers = {"Authorization": f"Bearer {token}"}
         http = self._http or httpx.Client(timeout=30)
-        body = {"jobId": ctx.job_id, "image": st.lab_image, "tasks": [{"id": t["id"], "timeoutSec": t["timeoutSec"]} for t in tasks]}
+        body = {"jobId": ctx.job_id, "image": st.lab_image, "tasks": [{"id": t["id"], "timeoutSec": t["timeoutSec"]} for t in tasks],
+                "skills": job["review"].get("skills") or []}  # 공식 스킬은 실행기가 받아 읽기 전용으로 붙인다 (A, 2026-11-02)
         try:
             res = http.post(f"{st.lab_runner_url}/runs", json=body, headers=headers)
         except httpx.HTTPError as e:
@@ -82,6 +83,8 @@ class LabStep:
                     break
         else:
             raise StepFailure("transient", "실험이 시간 안에 끝나지 않았다(실행기 응답)")
+        if run.get("status") == "error" and str(run.get("error", "")).startswith("스킬을 받지 못했다"):
+            raise StepFailure("deterministic", f"{run['error']} (흉내 내지 않고 실험하지 않았다)"[:600])
         evidence = build_evidence(ctx, tasks, run)
         ctx.write_json("lab.json", {"runner": run, "ok": sum(1 for t in evidence["tasks"] if t["ok"]), "total": len(tasks)})
         ctx.write_json("evidence.json", evidence)

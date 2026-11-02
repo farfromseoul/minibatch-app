@@ -13,6 +13,7 @@ review_video:
   max_tasks: 3
   task_timeout_sec: 600
   duration: {base: 30, per_task: 20}   # 목표 길이 = 30 + 20 × 과제 수 초
+  skill_repos: [anthropics/skills]     # 실험 밖에서 받아 읽기 전용으로 넣는 공식 스킬 저장소 (실행기 LAB_SKILL_REPOS 와 같게, 2026-11-02)
 tts:
   speed: 0.93
   speech_chars_per_sec: 7.5
