@@ -24,7 +24,9 @@ $hook_styles
   - demo: 실제로 쳐 보이는 실습 화면. 명령·코드·설정·요청 문장이 핵심인 항목이면 꼭 쓴다(그렇지 않은 개념 항목만 kind "none", title "", steps []).
     - kind: terminal(셸 명령), code(설정 파일·코드 몇 줄), chat(AI 에게 치는 요청 문장), settings(메뉴 경로, 예: "Settings > Permissions")
     - title: 화면 위 작은 제목(16자 이내, 예: "터미널", ".claude/settings.json")
-    - steps: 1~3단계. input 은 화면에 그대로 타이핑할 것(60자 이내, 실제로 존재하는 명령·옵션·메뉴만. 확실하지 않으면 가장 기본 명령만),
+    - steps: 1~3단계. input 은 화면에 그대로 타이핑할 것(60자 이내, 실제로 존재하는 명령·옵션·메뉴만. 확실하지 않으면 가장 기본 명령만).
+      구독자가 자기 컴퓨터에서 그대로 쳐서 쓸모 있는 명령만 쓴다: 설치·실행·설정·그 도구의 실제 명령(예: "claude mcp add …", "npx skills add …", "/plugin install …").
+      폴더·파일을 보기만 하는 명령(ls, cat, wc, top, echo, pwd)이나 결과를 꾸며 내는 시늉은 쓰지 않는다. 쓸 만한 실제 명령이 없으면 demo 를 none 으로,
       output 은 그 결과로 화면에 뜨는 줄 0~4개(각 40자 이내, 실제 출력 모양을 짧게. 지어낸 숫자·버전 금지. 모르면 "✓ 완료" 처럼 짧게)
   - lines: 데모가 none 이면 정확히 $item_lines문장, 데모가 있으면 $item_lines~$item_lines_demo문장. (2문장이면 아래 2)·3)을 한 문장으로)
     1) 순서·이름·한 줄 소개를 함께(12자 이상). 예: "첫 번째, 할 일에 맞는 스킬을 찾아 주는 [find-skills]예요"

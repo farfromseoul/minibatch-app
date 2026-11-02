@@ -70,6 +70,19 @@ class DemoRulesTest(unittest.TestCase):
         d["items"][1]["lines"].append(fill("하나 더 말해요", 15))
         self.assertTrue(any("2번 항목" in p and "문장" in p for p in self.check(d)))
 
+    def test_filler_commands_are_rejected(self):
+        """2026-11-02 사용자: 구독자가 따라 쳐서 쓸모 있는 실제 명령만. ls·cat·wc·top 같은 시늉 명령은 안 된다"""
+        for cmd in ("ls ~/skills | wc -l", "cat SKILL.md", "top -n 3", "echo done", "pwd"):
+            d = demo_reply()
+            d["items"][0]["demo"]["steps"][0]["input"] = cmd
+            d["items"][0]["lines"][1] = f"먼저 [{' '.join(cmd.split()[:2])}] 를 쳐 봐요"
+            self.assertTrue(any("쓸모 있는" in p for p in self.check(d)), cmd)
+        self.assertEqual(self.check(demo_reply()), [])  # npx skills find·add 는 실제로 쓰는 명령
+
+    def test_terminal_is_not_a_picker_choice(self):
+        from app.schemas.templates import DETAIL_VISUALS
+        self.assertNotIn("LTerminal", DETAIL_VISUALS)  # 터미널 화면은 검사된 데모(LWalkthrough)로만
+
     def test_missing_demo_is_treated_as_none(self):
         self.assertEqual(self.check(reply()), [])
 

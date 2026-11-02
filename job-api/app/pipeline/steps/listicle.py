@@ -58,6 +58,8 @@ DEMO_INPUT_CHARS, DEMO_OUTPUT_CHARS, DEMO_TITLE_CHARS = 60, 40, 16
 # 일본어 가나·한자 (2026-11-01 실제: 단계 그림에 '変更差分を点検'). 대본·화면 글자는 한국어·영어만
 FOREIGN = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f]")
 FOREIGN_TAG = "일본어·한자"
+# 시늉 명령 (2026-11-02 사용자: 구독자가 따라 쳐서 쓸모 있는 실제 명령만. 폴더·파일 보기 같은 명령은 내용이 없다)
+FILLER_COMMANDS = {"ls", "cat", "wc", "top", "echo", "pwd", "cd", "clear", "exit", "whoami", "date", "head", "tail", "less", "more"}
 # 최신 검색·반복 막기 (v1.4 L23·L24, 2026-11-01 사용자: '최근 인기 스킬 5개' 가 매번 같은 내용)
 RESEARCH_WORDS = ("최근", "최신", "인기", "요즘", "트렌드", "요새", "새로 나온", "핫한")
 REPEAT_TAG = "반복"
@@ -185,6 +187,10 @@ def check_demo(i: int, item: dict[str, Any], base: int = ITEM_LINES) -> list[str
             continue
         if any(len(str(o)) > DEMO_OUTPUT_CHARS for o in st.get("output") or []):
             out.append(f"{i}번 항목 데모 {j}단계 output 한 줄은 {DEMO_OUTPUT_CHARS}자 이내")
+        if demo["kind"] == "terminal" and inp.split()[0].lower() in FILLER_COMMANDS:
+            out.append(f"{i}번 항목 데모 {j}단계 '{inp[:30]}' 는 내용 없는 명령이다. 구독자가 그대로 쳐서 쓸모 있는 실제 명령"
+                       f"(설치·실행·설정·도구 명령)으로 바꾼다")
+            continue
         key = step_key(inp)
         if key and key not in _core(lines[j]):
             out.append(f"{i}번 항목 데모 {j}단계 입력 '{' '.join(inp.split()[:2])}' 를 {j + 1}번째 문장에서 그대로 말한다"

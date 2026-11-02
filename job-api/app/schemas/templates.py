@@ -106,7 +106,9 @@ LISTICLE_TEMPLATES: dict[str, dict[str, Any]] = {
                                     "items": _obj(["name"], name=_STR, note=_STR, tag=_STR)})},
     "LOutro": {"use": "끝 카드", "props": _obj(["title"], title=_STR, subtitle=_STR)},
 }
-DETAIL_VISUALS = ["LChat", "LSteps", "LBeforeAfter", "LTerminal", "LStat", "LIcon", "LCompare"]
+# LTerminal 은 뺐다 (2026-11-02 사용자: 그림 LLM 이 지어낸 명령·출력). 터미널 화면은 대본과 함께 검사된 데모(LWalkthrough)로만.
+# 템플릿 자체는 남겨 둔다(지난 timeline 을 다시 렌더할 수 있게)
+DETAIL_VISUALS = ["LChat", "LSteps", "LBeforeAfter", "LStat", "LIcon", "LCompare"]
 TEMPLATES.update(LISTICLE_TEMPLATES)
 
 

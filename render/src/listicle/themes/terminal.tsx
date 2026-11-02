@@ -53,7 +53,7 @@ const Background: React.FC = () => {
         <span style={{ color: "#FF5F56" }}>●</span>
         <span style={{ color: AMBER }}>●</span>
         <span style={{ color: GREEN }}>●</span>
-        <span style={{ marginLeft: 16 }}>minibatch@shorts: ~/top</span>
+        <span style={{ marginLeft: 16 }}>MiniBatch</span>
       </div>
       <AbsoluteFill style={{ backgroundImage: "repeating-linear-gradient(0deg, rgba(0,0,0,0.28) 0 2px, transparent 2px 4px)" }} />
     </>
@@ -78,7 +78,8 @@ const Progress: React.FC<ProgressProps> = ({ t, index }) => {
 const ItemHeader: React.FC<HeaderProps> = ({ t, index, since }) => {
   const it = t.tracker?.items[index - 1];
   if (!it) return null;
-  const cmd = `$ cat ${pad2(index)}-${it.name.replace(/\s+/g, "-")}.md`;
+  // 가짜 명령($ cat …md) 대신 번호 주석 (2026-11-02 사용자: 의미 없는 명령은 넣지 않는다)
+  const cmd = `# ${pad2(index)} / ${pad2(t.tracker?.items.length ?? 0)}`;
   const size = fitFontSize(it.name, L.width, 66, 38, 1) ?? 38;
   return (
     <div style={{ ...abs(L.side, 214, L.width), fontFamily: MONO }}>
@@ -124,7 +125,7 @@ const Line: React.FC<{ y: number; children: React.ReactNode; size?: number; colo
 
 const HookClaim: React.FC<LSceneProps<{ kicker: string; claim: string; claimNote?: string; aside?: string }>> = ({ durationInFrames, props }) => {
   const frame = useCurrentFrame();
-  const cmd = `$ ls ~/${props.kicker.replace(/\s+/g, "-")} | wc -l`;
+  const cmd = `# ${props.kicker}`;  // 주제 이름을 주석 모양으로 (가짜 명령 금지)
   const t1 = phase(frame, durationInFrames, 0.02, 0.25);
   const size = fit(props.claim, 900, 170, 80);
   return (
@@ -134,7 +135,7 @@ const HookClaim: React.FC<LSceneProps<{ kicker: string; claim: string; claimNote
         <div style={{ ...abs(L.side, 560, L.width), fontFamily: MONO, fontSize: size, fontWeight: 800, color: GREEN, textShadow: glowText(1.4), letterSpacing: -4 }}>{typed(props.claim, phase(frame, durationInFrames, 0.25, 0.45))}</div>
       ) : null}
       {props.claimNote && phase(frame, durationInFrames, 0.45, 0.5) > 0 ? (
-        <Line y={600 + size} color={AMBER}>[WARN] {props.claimNote}</Line>
+        <Line y={600 + size} color={AMBER}>[{props.claimNote}]</Line>
       ) : null}
       {props.aside && phase(frame, durationInFrames, 0.5, 0.55) > 0 ? <Line y={660 + size} color={tokens.muted}># {props.aside}</Line> : null}
     </AbsoluteFill>
@@ -146,7 +147,7 @@ const HookReveal: React.FC<LSceneProps<{ kicker: string; headline: string; highl
   const size = fit(props.headline, 940, 84, 48);
   return (
     <AbsoluteFill>
-      <Line y={300} color={tokens.muted}>{typed(`$ top -n ${props.count}`, phase(frame, durationInFrames, 0, 0.15))}</Line>
+      <Line y={300} color={tokens.muted}>{typed(`# ${props.kicker}`, phase(frame, durationInFrames, 0, 0.15))}</Line>
       <div style={{ ...abs(L.side, 380, L.width), fontFamily: MONO, fontSize: size, fontWeight: 800, color: tokens.text, opacity: phase(frame, durationInFrames, 0.15, 0.2) }}>
         {props.highlight && props.headline.includes(props.highlight) ? (
           <>
@@ -162,7 +163,8 @@ const HookReveal: React.FC<LSceneProps<{ kicker: string; headline: string; highl
         const gap = Math.min(92, Math.floor(660 / props.count));
         return on ? (
           <Line key={i} y={560 + i * gap} size={props.count > 7 ? 34 : 40} color={i === 0 ? GREEN : tokens.sub}>
-            {`PID ${String(1000 + i * 17)}  ${pad2(i + 1)}  ${"▮".repeat(10 - i)}${"▯".repeat(i)}  ready`}
+            {/* 가짜 PID·프로세스 줄 대신 번호 칸만 (2026-11-02 사용자) */}
+            {`[${pad2(i + 1)}] ${i === 0 ? "▶" : "·"}`}
           </Line>
         ) : null;
       })}
@@ -192,7 +194,7 @@ const Recap: React.FC<LSceneProps<{ title: string; subtitle?: string; items: { n
   const n = props.items.length;
   return (
     <AbsoluteFill>
-      <Line y={250} color={tokens.muted}>{typed("$ cat summary.txt", phase(frame, durationInFrames, 0, 0.12))}</Line>
+      <Line y={250} color={tokens.muted}>{typed("# 정리", phase(frame, durationInFrames, 0, 0.12))}</Line>
       <div style={{ ...abs(L.side, 320, L.width), fontFamily: MONO, fontSize: fit(props.title, 900, 84, 48), fontWeight: 800, color: GREEN, textShadow: glowText(1.2), opacity: phase(frame, durationInFrames, 0.12, 0.16) }}>{props.title}</div>
       {props.subtitle ? <Line y={430} color={tokens.muted}># {props.subtitle}</Line> : null}
       {props.items.map((it, i) => {
@@ -214,14 +216,10 @@ const Outro: React.FC<LSceneProps<{ title: string; subtitle?: string }>> = ({ du
   const size = fit(props.title, 900, 92, 48, 2);
   return (
     <AbsoluteFill>
-      <Line y={520} color={tokens.muted}>{typed("$ exit", phase(frame, durationInFrames, 0, 0.15))}</Line>
+
       <div style={{ ...abs(L.side, 620, L.width), fontFamily: MONO, fontSize: size, fontWeight: 800, color: GREEN, textShadow: glowText(1.3), lineHeight: 1.25, wordBreak: "keep-all" }}>{typed(props.title, phase(frame, durationInFrames, 0.15, 0.45))}</div>
       {props.subtitle && phase(frame, durationInFrames, 0.5, 0.52) > 0 ? <Line y={660 + size * 2.4} color={tokens.sub}># {props.subtitle}</Line> : null}
-      {phase(frame, durationInFrames, 0.6, 0.62) > 0 ? (
-        <Line y={760 + size * 2.4} color={tokens.muted}>
-          Process completed <span style={{ color: GREEN }}>✓</span> <span style={{ background: GREEN, opacity: frame % 30 < 15 ? 1 : 0 }}>{"  "}</span>
-        </Line>
-      ) : null}
+      {/* 끝: 제목·부제만 (가짜 exit·Process completed 줄 뺌) */}
     </AbsoluteFill>
   );
 };
